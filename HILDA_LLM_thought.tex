@@ -1,0 +1,105 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{geometry}
+\geometry{margin=1in}
+\usepackage{hyperref}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{xcolor}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  urlcolor=blue!60!black,
+  citecolor=blue!60!black
+}
+
+\newcommand{\hilda}{\textsc{HILDA}}
+\newcommand{\scidr}{\textsc{sCIDR}}
+\newcommand{\pq}{\textsc{PQ}}
+\newcommand{\suid}{\textsc{SUID}}
+\newcommand{\llm}{\textsc{LLM}}
+\newcommand{\cot}{\textsc{CoT}}
+
+\title{\textbf{\hilda{} for Thought: Semantic Pointers for Token-Efficient LLM Reasoning}}
+\author{Draft (October 2025)}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present \emph{semantic pointers} built on \hilda{}---a meaning-sortable 128-bit address derived from a fixed embedding model, a 2D projection, and a 2D Hilbert index. We show how \hilda{} enables large language models (\llm s) to \emph{emit} compact handles in place of verbose chain-of-thought (\cot) spans and to \emph{expand} those handles into retrieval packets only when needed. This simple indirection cuts tokens and latency while improving reuse and consistency. We formalize the pointer emission policy, derive a coarse-to-fine decision rule, and outline training and evaluation protocols for pointer-centric reasoning.
+\end{abstract}
+
+\section{Introduction}
+Contemporary \llm\ systems rely on retrieval and long-context prompting to solve knowledge-heavy tasks. While effective, repeatedly restating plans, sub-arguments, and evidence bundles is costly. We argue that many reasoning steps can be \emph{named} and then reused via compact \emph{semantic pointers}---deterministic 128-bit addresses that refer to regions of meaning space. We instantiate these pointers with \hilda{}, a meaning-sortable identifier. With \hilda{}, the model replaces a long \cot{} span with a single handle that can later be expanded into an evidence packet on demand.
+
+\paragraph{Contributions.} (i) A formal interface for \emph{emit} and \emph{expand} using \hilda{}. (ii) A decision policy balancing token cost and uncertainty. (iii) Coarse-to-fine (\scidr) and compositional (multi-\hilda{}, \pq) pointer schemes. (iv) Training recipes and metrics for pointer-centric reasoning.
+
+\section{Background: Pointers over Prose}
+We view an \llm\ trace as alternating \emph{symbolic decisions} and \emph{textual realizations}. In standard \cot, both are realized as text. In pointer mode, decisions are realized as 128-bit handles that map to cached artifacts (\emph{expansions}). Examples include: a legal thesis template, a bundle of top-$k$ neighbors, or a step-by-step plan with citations.
+
+\section{HILDA Pointers}
+A \hilda{} value $H \in \{0,1\}^{128}$ packs: 4-bit version, 60-bit Hilbert index $h$ (from a fixed 2D projection of an embedding), 48-bit time, and a 16-bit tiebreaker. We denote a \emph{prefix} of $h$ with \scidr{} notation $h{/}\ell$ ($\ell \le 60$) for multi-resolution addressing. A \emph{pointer} is the tuple $(v, h{/}\ell)$ where $v$ is the version.
+
+\section{Pointer Emission Policy}
+Let $\pi_\theta$ be the \llm\ policy that emits either (a) natural-language continuation or (b) a pointer $p=(v,h{/}\ell)$. Let $C_{\mathrm{text}}$ be the token cost per wordpiece and $C_{\mathrm{expand}}$ be the amortized cost of issuing an expansion (retrieval + rerank). Let $\Delta$ denote the expected reduction in downstream uncertainty from an expansion at precision $\ell$. A simple myopic rule is:
+\begin{equation}
+\text{Emit pointer at precision } \ell^\ast = \arg\max_{\ell \in \mathcal{L}} \bigg[ \underbrace{\Delta(\ell)}_{\text{utility}} - \lambda \underbrace{C_{\mathrm{expand}}(\ell)}_{\text{latency/cost}} - \mu \underbrace{C_{\mathrm{id}}}_{\text{128-bit handle tokens}} \bigg],
+\end{equation}
+where $C_{\mathrm{id}}$ is a small constant (tokens to print \suid{} or a short base-4096 mnemonic), and $\lambda,\mu \!\ge\!0$ are trade-off parameters. In practice $\Delta(\ell)$ is approximated by a confidence proxy (e.g., predictive entropy or margin) and $C_{\mathrm{expand}}(\ell)$ shrinks for coarser prefixes due to smaller neighborhoods.
+
+\paragraph{Coarse-to-fine widening.} If a /60 prefix yields insufficient candidates, we widen to /56, /52, \dots\ until the candidate set meets a target $M$, then rerank by cosine before injecting a minimal expansion (e.g., $k{=}6$ snippets).
+
+\section{Token and Latency Accounting}
+Consider a baseline step that would consume $T$ tokens of \cot{} and $R$ tokens of retrieval context. With pointer mode, we pay $t_{\mathrm{id}}$ tokens for the handle plus $r(\ell)$ for a compact expansion (or zero if deferred). The expected saving is
+\begin{equation}
+\mathbb{E}[\text{save}] \;=\; (T{+}R) - \big( t_{\mathrm{id}} + \mathbf{1}\{\text{expand}\}\, r(\ell) \big).
+\end{equation}
+When a pointer is \emph{reused} $f$ times across a session or workflow, the total saving scales roughly as $f\,(T{+}R) - (t_{\mathrm{id}} + r(\ell))$, yielding large gains for recurrent sub-arguments and templates.
+
+\section{Compositional Pointers}
+\paragraph{Multi-\hilda{} triangulation.} Emit $m$ pointers $p_1,\dots,p_m$; intersect their neighborhoods before rerank. This sharpens meaning while keeping each handle short.
+
+\paragraph{Product-quantized handles.} Split the embedding into $M$ subspaces; quantize each with a 4096-centroid codebook (12 bits). The handle is $12M$ bits (e.g., 8$\times$12=96 bits), optionally rendered as $M$ short words. This yields a closed, compact space for on-device routing while retaining open-world coverage.
+
+\section{Caching, Reuse, and Consistency}
+We cache expansions keyed by $(v,h{/}\ell)$. When the model re-emits the same pointer, we inject the cached packet rather than recomputing retrieval. This improves consistency across steps and users, and supports \emph{canonicalization} of recurrent arguments (e.g., a standard legal thesis with citations).
+
+\section{Training Protocols}
+\paragraph{Supervised pairs.} Create $(\text{text} \to \text{pointer})$ and $(\text{pointer} \to \text{expansion})$ pairs from existing traces by compressing recurring spans into handles and distilling expansions into minimal packets.
+
+\paragraph{Bandit gating.} Learn when to expand with a binary reward that trades answer quality against token/latency budget. Use off-policy evaluation on logs to tune thresholds.
+
+\paragraph{RL with pointer actions.} Treat \texttt{emit(pointer)} and \texttt{expand(pointer)} as actions; reward is task success minus a cost proportional to tokens and milliseconds.
+
+\section{APIs and Middleware}
+We expose two tool calls:\vspace{-0.25em}
+\begin{itemize}[leftmargin=*]
+  \item \texttt{emit\_hilda(text, precision\_bits)} $\to$ \{suid, prefix, nearest\_words\}
+  \item \texttt{expand\_hilda(\{suid|prefix\}, k)} $\to$ \{snippets, citations, neighbors\}
+\end{itemize}
+Middleware recognizes the markup \verb|⟦HILDA:...⟧| and executes expansions in-place with caching and authZ checks. Prefix widening is automatic until a target candidate set is met.
+
+\section{Evaluation Protocol}
+We evaluate on retrieval-augmented QA and domain tasks:\vspace{-0.25em}
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Token/latency savings}: average tokens per answer, end-to-end milliseconds.
+  \item \textbf{Quality}: exact match / F1 / judge scores vs. a \cot{} baseline with standard RAG.
+  \item \textbf{Locality}: Spearman $\rho$ between cosine distance and $|\Delta h|$ in \hilda{} order; Recall@k vs. HNSW prefilter.
+  \item \textbf{Reuse}: fraction of steps satisfied by cached expansions; consistency variance across users.
+  \item \textbf{Ablations}: (i) no caching, (ii) fixed /60 vs. adaptive \scidr{}, (iii) single vs. multi-\hilda{}, (iv) \pq{} handles.
+\end{enumerate}
+
+\section{Limitations and Ethics}
+\hilda{} is not cryptographic; it leaks coarse topical information. Enforce access control at expansion time and consider zeroing time/tiebreaker fields in sensitive contexts. Locality is coarse; always rerank with true cosine for final selection. Domain drift requires versioning.
+
+\section{Conclusion}
+Semantic pointers via \hilda{} reframe \llm{} reasoning as chains of compact handles with on-demand evidence. This reduces tokens and latency, improves reuse and consistency, and plays well with standard databases. The approach is simple to deploy: it requires a frozen embedding model, a stable projection, and two tool calls.
+
+\end{document}
