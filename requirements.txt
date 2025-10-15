@@ -1,0 +1,5 @@
+wordfreq
+google-genai
+numpy
+tqdm
+rapidfuzz
