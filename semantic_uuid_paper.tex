@@ -44,11 +44,11 @@ Conventional identifiers (\emph{UUIDv4/7}, content hashes) are oblivious to mean
 \paragraph{Design goals.} (1) \textbf{Speakable}: robust voice/phone channel. (2) \textbf{Sortable}: B-tree friendly, locality-preserving. (3) \textbf{Deterministic}: stable given frozen parameters. (4) \textbf{Composable}: multi-resolution, multi-handle. (5) \textbf{Toolable}: LLMs emit/expand handles as first-class actions.
 
 \section{Background and Related Work}
-\textbf{UUIDs/ULIDs.} RFC4122-style UUIDs and time-sortable ULIDs provide uniqueness and ordering without semantics. \textbf{Mnemonic wordlists.} BIP-39 and similar schemes map entropy to word sequences for human entry. \textbf{Vector search.} FAISS/HNSW index high-dimensional embeddings; product quantization (\pq) compresses vectors for ANN. \textbf{Locality-preserving codes.} Geohash/Hilbert mappings preserve spatial neighborhoods in 2D; we adapt this to semantics. \textbf{Diversity sampling.} Max--min (Gonzalez) and \dpp\ provide coverage guarantees.
+\textbf{UUIDs/ULIDs.} RFC4122-style UUIDs and time-sortable ULIDs provide uniqueness and ordering without semantics. \textbf{Mnemonic wordlists.} BIP-39 and similar schemes map entropy to word sequences for human entry. \textbf{Hashing for Similarity.} Locality-sensitive hashing (LSH) for cosine similarity~\cite{charikar, andoni} and semantic hashing~\cite{salakhutdinov} are foundational for mapping semantic content to compact binary codes. \textbf{Vector search.} FAISS/HNSW index high-dimensional embeddings; product quantization (\pq) compresses vectors for ANN. \textbf{Locality-preserving codes.} Geohash/Hilbert mappings preserve spatial neighborhoods in 2D; we adapt this to semantics. \textbf{Diversity sampling.} Max--min (Gonzalez) and \dpp\ provide coverage guarantees.
 
 \section{A 4096-Word Diversity--First Codebook}
 \label{sec:codebook}
-Let $W=\{w_i\}_{i=1}^N$ be a cleaned candidate lexicon (e.g., nouns/verbs). Let $X\in\mathbb{R}^{N\times D}$ be L2-normalized embeddings. We greedily build $S\subset W$ of size $K{=}4096$ by the classic farthest-point heuristic:
+Let $W=\{w_i\}_{i=1}^N$ be a cleaned candidate lexicon (e.g., nouns/verbs). Let $X\in\mathbb{R}^{N\times D}$ be L2-normalized embeddings, cached at load time. We greedily build $S\subset W$ of size $K{=}4096$ by the classic farthest-point heuristic:
 
 \begin{algorithm}[H]
 \caption{Greedy max--min selection (cosine distance)}
@@ -66,8 +66,12 @@ Let $W=\{w_i\}_{i=1}^N$ be a cleaned candidate lexicon (e.g., nouns/verbs). Let 
 
 This yields a spread-out vocabulary tolerating speech/typo noise. We map integers $[0,4095]$ to words to obtain a base-4096 codec (12 bits/word). For human transmission we use 11 words ($11{\times}12=132$ bits) to represent a 128-bit payload plus a 4-bit CRC; optional ECC (e.g., Reed--Solomon) adds correction.
 
-\paragraph{Semantic decoding without exact words.}
-At decode-time, we embed received free-form phrases and snap each slot to the nearest codeword in the codebook's embedding space, enabling \emph{meaning-only} channels (no exact word recall).
+\paragraph{Approximation and cost.}
+The greedy farthest-point rule is the classical 2-approximation for the k-center objective~\cite{gonzalez}.
+With L2-normalized embeddings, each update is a vectorized dot product. The overall complexity is
+$O(KND)$ (with $K{=}4096$, $N{\approx}4{\times}10^4$ feasible on commodity hardware).
+We suppress near-duplicates using both string edit distance and high cosine similarity to any selected point,
+and optionally apply penalties for homographs or undesirable POS tags.
 
 \section{A Meaning--Sortable 128-bit Identifier (\suid)}
 \label{sec:suid}
@@ -75,15 +79,24 @@ To sort and range-scan by meaning without specialized vector indexes, we propose
 \begin{enumerate}[leftmargin=2em]
   \item Embed and L2-normalize $v$.
   \item Project $y=\text{PCA}_2(v)$; normalize to $z\in[0,1]^2$ via recorded min/max.
-  \item Quantize each axis to $b{=}30$ bits, $(x,y)\in\{0,\dots,2^b{-}1\}^2$.
-  \item Map $(x,y)$ to a 60-bit Hilbert index $h$ (locality-preserving).
+  \item Quantize each axis to $b{=}30$ bits, yielding $2^{30}$ bins per axis.
+  \item Map the resulting $(x,y)\in\{0,\dots,2^{30}{-}1\}^2$ coordinates to a 60-bit Hilbert index $h$, yielding a locality-preserving key.
   \item Pack: $\underbrace{\text{ver}}_{4}\,\|\,\underbrace{h}_{60}\,\|\,\underbrace{\text{unix\_ms}}_{48}\,\|\,\underbrace{\text{rand}}_{16}$.
 \end{enumerate}
 Lexicographic sort by the 128-bit value groups items by $h$ (meaning) then time.
 
-\paragraph{Multi-resolution prefixes (\scidr).} Like CIDR blocks, we use a prefix length $\ell\!\le\!60$ to denote coarse vs. fine cells. Systems can range-scan on the prefix and refine with cosine at the end.
+\paragraph{Prefix ranges (sCIDR).}
+For Hilbert index $h\in[0,2^{60})$ and a prefix length $\ell\le 60$, the range of keys sharing prefix $p$ is
+$[\,p \ll (60{-}\ell),\, ((p{+}1)\ll(60{-}\ell)) - 1\,]$.
+Implementations can issue a single B-tree range scan on this interval before cosine reranking.
+
+\paragraph{Alternatives.}
+Morton (Z-order) curves are simpler to implement but typically preserve locality less well than Hilbert~\cite{moon}.
+For higher fidelity, one may replace PCA(2) with OPQ/PQ in multiple subspaces and compose the codes.
 
 \paragraph{Compositional variants.} (i) \textbf{Multi-\suid} triangulation: emit 2--4 \suid s and intersect neighborhoods. (ii) \textbf{Product-quantized keys}: split the $D$-dim vector into $M$ subspaces; quantize each with a 4096-centroid codebook (12 bits each), yielding a compact $12M$-bit handle (e.g., $M{=}8\Rightarrow 96$ bits), optionally rendered as $M$ words for speech.
+
+\paragraph{Stability.} The PCA projection is fit once on the codebook vectors and frozen. Any change to the embedding model or the PCA fit requires a version bump in the \suid\ to prevent key collisions.
 
 \section{LLMs as Semantic Pointer Machines}
 \label{sec:llm}
@@ -95,17 +108,18 @@ We define a \emph{semantic pointer protocol} (SPP): LLMs \emph{emit} compact han
 
 \paragraph{Training.} Supervise two directions: $(T\!\to\!\text{handle})$ and $(\text{handle}\!\to\!\text{expansion})$. Toolformer-style traces teach when to emit vs. expand. A registry maps high-traffic handles to vetted templates (e.g., legal theses).
 
+\paragraph{Operational notes.}
+At runtime we widen coarse-to-fine: if a /60 prefix yields <M candidates, we automatically back off to /56, /52, etc.,
+then rerank by cosine. Expansions are cached per prefix and invalidated whenever the semantic-space version changes.
+Access control is enforced at expansion time; SUIDs and prefixes should be treated as topic metadata.
+
 \section{Security, Ethics, and Versioning}
 \suid\ and codebook phrases are \emph{not} cryptographic. Use content hashes for security boundaries. Freeze \emph{embedder}, \emph{PCA}, and normalization; bump a 4-bit version when anything changes. Enforce authorization at expansion time: a handle may point to restricted content. Audit for domain bias; consider domain-specific versions (e.g., \texttt{v=2-law}).
 
 \section{Evaluation Plan}
-We propose four families of experiments.
-\begin{enumerate}[leftmargin=2em]
-  \item \textbf{B-tree prefilter vs. ANN baselines:} Given a query, compare (a) \suid\ prefix range-scan $+$ cosine rerank vs. (b) HNSW/FAISS KNN. Measure recall@k, latency, and cost.
-  \item \textbf{Dedup/canonicalization:} Collapse near-duplicates by \scidr\ bucket; evaluate precision/recall vs. thresholded cosine.
-  \item \textbf{LLM token savings:} Replace boilerplate sub-arguments with handles; measure tokens and task accuracy vs. standard CoT.
-  \item \textbf{Robust I/O:} Human study for speech/typo robustness of 11-word codec with CRC/ECC; compare to shorter/base-2048 lists.
-\end{enumerate}
+We evaluate (i) locality preservation via Spearman ρ between cosine distance and |ΔHilbert|,
+(ii) retrieval quality on BEIR tasks comparing HILDA(/ℓ)+cosine rerank against HNSW/FAISS (Recall@k, MRR, latency),
+(iii) bucket occupancy and collision rates across prefix lengths, and (iv) cross-version stability (Jaccard@k of neighbor sets).
 
 \section{Limitations}
 Locality from PCA$+$Hilbert is coarse and dimension-losing; final tasks should re-rank with true cosine on full vectors. Open-world semantics imply drift; versioning and multi-handle triangulation mitigate but do not eliminate this. Human mnemonic channels require careful curation for polysemy and cross-lingual use.
@@ -143,6 +157,11 @@ SUID = pack( ver=1 (4b), h (60b), unix_ms (48b), rand16 (16b) )
 Meaning-addressable identifiers enable practical indirection: humans get robust phrases; machines get sortable 128-bit keys; LLMs get compact pointers that expand into evidence. While not a replacement for vectors or cryptography, the trio of max--min codebooks, \suid, and the semantic pointer protocol offers a simple, deployable bridge between language, storage, and reasoning.
 
 \begin{thebibliography}{9}
+\bibitem{charikar} M. Charikar, "Similarity Estimation Techniques from Rounding Algorithms," STOC, 2002.
+\bibitem{andoni} A. Andoni, P. Indyk, "Near-optimal hashing algorithms for approximate nearest neighbor," CACM, 2008.
+\bibitem{salakhutdinov} R. Salakhutdinov, G. Hinton, "Semantic Hashing," IJAR, 2009.
+\bibitem{moon} B. Moon et al., "Analysis of the Clustering Properties of the Hilbert Space-Filling Curve," TKDE, 2001.
+
 \bibitem{gonzalez}
 T. F. Gonzalez, ``Clustering to minimize the maximum intercluster distance,'' \emph{Theoretical Computer Science}, 38, 1985.
 
@@ -167,5 +186,16 @@ BIP-0039: Mnemonic code for generating deterministic keys, 2013.
 \bibitem{rfc4122}
 RFC 4122: A Universally Unique IDentifier (UUID) URN Namespace, 2005.
 \end{thebibliography}
+
+\appendix
+\section{Implementation Notes}
+
+\paragraph{SQL prefix ranges.}
+Let HILDA be stored as (hi64, lo64). A /ℓ range on the 60-bit Hilbert field maps to
+[ (p << (60-ℓ)) << 4, ((p+1) << (60-ℓ)) << 4 ) at the high 64 bits (since 4 version bits precede the Hilbert index).
+This yields a single BETWEEN predicate over (hi64, lo64).
+
+\paragraph{Privacy and Timestamps.}
+The 48-bit timestamp in a \suid\ reveals the mint time of the identifier. If this is a privacy concern, applications should either set the timestamp to a constant (e.g., zero) or encrypt the lower bits of the \suid\ payload.
 
 \end{document}
