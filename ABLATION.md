@@ -25,8 +25,9 @@ Two tables. The first selects operating points by *mean* scan fraction; the
 second imposes the budget on every single query, by visiting cells
 nearest-first and truncating the boundary cell in index order, the way a range
 scan with a LIMIT would. The second is the stricter comparison and the one to
-read first. In it, the depth is chosen on the validation queries and reported
-on the test queries, so no number is selected on the queries it reports.
+read first. In both, the depth is chosen on the validation queries and
+reported on the test queries, so no number is selected on the queries it
+reports.
 
 recall@10 at a per-query candidate budget, with the mean number of separate
 B-tree ranges:
@@ -68,14 +69,14 @@ Seven findings:
 1. **Hierarchical k-means wins by a wide margin, under either accounting.**
    At a strict 80-candidate-per-query budget it reaches 0.776 against 0.099
    for PCA(2)+Hilbert, and at 400 candidates 0.960 against 0.337. Selecting by
-   mean scan instead gives 0.662 against 0.070 at 1%, and 0.958 against 0.298
+   mean scan instead gives 0.662 against 0.068 at 1%, and 0.958 against 0.295
    at 5%. The margin does not come from the averaging, and it survives choosing
    the depth on separate queries from the ones reported.
 2. **Its scan cost is also better behaved per query.** At a 1% mean budget the
    tree's p95 is 0.9%, tighter than every SFC variant's (1.1% to 2.0%). The
    worry that unbalanced cells would flatter the tree runs the other way here.
 3. **The quantile grid's advantage was an artefact of the mean budget.** By
-   mean scan, quantile scaling beats the repository's min-max grid 0.298 to
+   mean scan, quantile scaling beats the repository's min-max grid 0.295 to
    0.197 at 5%. Under a per-query candidate budget min-max is marginally ahead
    (0.356 against 0.337). The reparametrisation buys a better-shaped scan, not
    better neighbours.

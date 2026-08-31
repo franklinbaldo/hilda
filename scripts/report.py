@@ -68,20 +68,25 @@ def read_points(path: Path) -> list[Point]:
 
 
 def best_within(points: list[Point], budget: float) -> Point | None:
-    """Return the highest-recall point whose *mean* scan stays inside a budget.
+    """Pick the depth on validation queries, then report the test measurement.
 
     The budget binds on the average query, not on every query, which is why the
-    rendered cell carries the p95 alongside.
+    rendered cell carries the p95 alongside. Depth is chosen the same way as in
+    the candidate-budget table: on the validation half only, so neither table
+    selects an operating point on the queries it reports.
     """
-    affordable = [p for p in points if p.scan_mean <= budget]
-    if not affordable:
+    affordable = [p for p in points if p.scan_mean <= budget and not p.budgeted]
+    validation = [p for p in affordable if p.split == "validation"]
+    test = {p.depth: p for p in affordable if p.split == "test"}
+    if not validation or not test:
         return None
-    return max(affordable, key=lambda p: (p.recall, -p.n_ranges))
+    depth = max(validation, key=lambda p: (p.recall, -p.n_ranges)).depth
+    return test.get(depth)
 
 
 def _cell(points: list[Point], budget: float) -> str:
-    """Format one family's best point at one budget, pooling seeds."""
-    per_seed = {}
+    """Format one family's selected point at one mean-scan budget."""
+    per_seed: dict[str, list[Point]] = {}
     for point in points:
         per_seed.setdefault(point.encoder, []).append(point)
     bests = [best_within(group, budget) for group in per_seed.values()]
@@ -195,10 +200,15 @@ def render_budget_table(points: list[Point], corpus_size: float) -> list[str]:
     return lines
 
 
+def _family_recall(points: list[Point], budget: float) -> float:
+    """Recall a family reaches at a budget, or zero when it reaches none."""
+    best = best_within(points, budget)
+    return best.recall if best is not None else 0.0
+
+
 def render(points: list[Point], notes: dict[str, float]) -> str:
     """Render the recall-within-budget table, with range counts in brackets."""
-    width = [p for p in points if not p.budgeted and p.split == "test"]
-    families = _families(width)
+    families = _families([p for p in points if not p.budgeted])
     header = " | ".join(f"mean scan ≤{b:.1%}" for b in BUDGETS)
     lines = [
         "# HILDA representation ablation",
@@ -208,14 +218,15 @@ def render(points: list[Point], notes: dict[str, float]) -> str:
         "takes; `p95` is the 95th-percentile per-query scan fraction, which is",
         "what a single unlucky query actually pays.",
         "",
+        "As in the table below, depth is chosen on the validation queries and",
+        "reported on the test queries.",
+        "",
         f"| encoder | {header} |",
         "|---|" + "---|" * len(BUDGETS),
     ]
     ordered = sorted(
         families.items(),
-        key=lambda item: (
-            -(best_within(item[1], BUDGETS[-1]) or Point("", 0, 0, 0, 0, 0)).recall
-        ),
+        key=lambda item: -_family_recall(item[1], BUDGETS[-1]),
     )
     for name, group in ordered:
         cells = " | ".join(_cell(group, budget) for budget in BUDGETS)
