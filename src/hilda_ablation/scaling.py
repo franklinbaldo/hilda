@@ -13,6 +13,9 @@ if TYPE_CHECKING:
 MIN_BUDGET = 1
 """No plan can retrieve fewer than one candidate."""
 
+MIN_FIT_POINTS = 2
+"""A log-log slope needs two rungs of the ladder before it means anything."""
+
 
 def budget_for_recall(
     recall_at: Callable[[int], float], target: float, ceiling: int
@@ -43,7 +46,7 @@ def budget_for_recall(
 
 def scaling_exponent(sizes: Sequence[int], budgets: Sequence[int]) -> float:
     """Fit ``budget ≈ N**alpha`` and return the log-log exponent ``alpha``."""
-    if len(sizes) != len(budgets) or len(sizes) < 2:
+    if len(sizes) != len(budgets) or len(sizes) < MIN_FIT_POINTS:
         message = "sizes and budgets must have the same length and at least two points"
         raise ValueError(message)
     size_array = np.asarray(sizes, dtype=float)

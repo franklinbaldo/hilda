@@ -25,12 +25,15 @@ from __future__ import annotations
 
 import argparse
 import logging
-from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from datasets import load_dataset
 from sentence_transformers import SentenceTransformer
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger("wikipedia_corpus")
 
