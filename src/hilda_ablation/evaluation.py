@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from hilda_ablation.codes import IndexRange, merge_ranges
+from hilda_ablation.geometry import unit_norm
 
 if TYPE_CHECKING:
     from hilda_ablation.encoders.protocol import Encoder
@@ -21,9 +22,7 @@ if TYPE_CHECKING:
 
 def exact_neighbours(corpus: np.ndarray, queries: np.ndarray, k: int) -> np.ndarray:
     """Ground truth: top-k by cosine similarity, brute force."""
-    normalised = corpus / np.linalg.norm(corpus, axis=1, keepdims=True)
-    probes = queries / np.linalg.norm(queries, axis=1, keepdims=True)
-    similarity = probes @ normalised.T
+    similarity = unit_norm(queries) @ unit_norm(corpus).T
     top = np.argpartition(-similarity, kth=k - 1, axis=1)[:, :k]
     order = np.take_along_axis(similarity, top, axis=1).argsort(axis=1)[:, ::-1]
     return np.take_along_axis(top, order, axis=1)
@@ -77,6 +76,26 @@ class CodeIndex:
 
 
 @dataclass(frozen=True)
+class ScanDistribution:
+    """Per-query scan cost. A budget met on average is not a budget per query."""
+
+    mean: float
+    p50: float
+    p95: float
+    maximum: float
+
+    @classmethod
+    def of(cls, fractions: np.ndarray) -> ScanDistribution:
+        """Summarise the per-query scan fractions of one operating point."""
+        return cls(
+            mean=float(fractions.mean()),
+            p50=float(np.percentile(fractions, 50)),
+            p95=float(np.percentile(fractions, 95)),
+            maximum=float(fractions.max()),
+        )
+
+
+@dataclass(frozen=True)
 class OperatingPoint:
     """One (depth, probes) setting of one encoder, averaged over queries."""
 
@@ -85,7 +104,7 @@ class OperatingPoint:
     n_probes: int
     recall: float
     recall_stderr: float
-    fraction_scanned: float
+    scanned: ScanDistribution
     n_ranges: float
 
     def as_row(self) -> dict[str, str | int | float]:
@@ -96,7 +115,10 @@ class OperatingPoint:
             "n_probes": self.n_probes,
             "recall": round(self.recall, 4),
             "recall_stderr": round(self.recall_stderr, 4),
-            "fraction_scanned": round(self.fraction_scanned, 5),
+            "scan_mean": round(self.scanned.mean, 5),
+            "scan_p50": round(self.scanned.p50, 5),
+            "scan_p95": round(self.scanned.p95, 5),
+            "scan_max": round(self.scanned.maximum, 5),
             "n_ranges": round(self.n_ranges, 2),
         }
 
@@ -145,6 +167,6 @@ def measure(
         n_probes=setting.n_probes,
         recall=float(recalls.mean()),
         recall_stderr=float(recalls.std(ddof=1) / np.sqrt(len(recalls))),
-        fraction_scanned=float(scanned.mean()),
+        scanned=ScanDistribution.of(scanned),
         n_ranges=float(ranges.mean()),
     )

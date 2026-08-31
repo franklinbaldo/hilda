@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from hilda_ablation.projections import Projection
 
 CurveName = Literal["hilbert", "morton"]
+Scaling = Literal["quantile", "minmax"]
 
 
 def _build_curve(curve: CurveName, dims: int, bits: int) -> SpaceFillingCurve:
@@ -122,25 +123,37 @@ ANCHOR_COUNT = 4097
 """Quantile anchors per axis: enough to flatten the marginal, cheap to store."""
 
 
+def _anchors(projected: np.ndarray, dims: int, scaling: Scaling) -> np.ndarray:
+    """Axis anchors that `_fractional` interpolates against.
+
+    Two anchors give the min-max grid the repository's own benchmark uses;
+    a full quantile ladder flattens each marginal instead.
+    """
+    count = 2 if scaling == "minmax" else ANCHOR_COUNT
+    quantiles = np.linspace(0.0, 1.0, count)
+    return np.stack(
+        [np.quantile(projected[:, axis], quantiles) for axis in range(dims)]
+    )
+
+
 def fit_sfc(
     points: np.ndarray,
     projection: Projection,
     bits: int,
     curve: CurveName,
+    scaling: Scaling = "quantile",
 ) -> SfcEncoder:
-    """Flatten each axis onto a uniform grid, the SFC family at its best.
+    """Fit the projected grid and order it with a space-filling curve.
 
-    A quantile transform is the friendliest possible input to a space-filling
-    curve: every cell holds a comparable share of the corpus, so the baseline
-    loses nothing to a badly scaled axis.
+    The default quantile scaling is the friendliest possible input to a curve:
+    every cell holds a comparable share of the corpus, so the baseline loses
+    nothing to a badly scaled axis. Pass "minmax" to reproduce the grid the
+    repository's own benchmark builds.
     """
-    projected = projection.apply(points)
-    quantiles = np.linspace(0.0, 1.0, ANCHOR_COUNT)
-    anchors = np.stack(
-        [np.quantile(projected[:, axis], quantiles) for axis in range(projection.dims)],
-    )
+    anchors = _anchors(projection.apply(points), projection.dims, scaling)
+    suffix = "" if scaling == "quantile" else f"-{scaling}"
     return SfcEncoder(
-        name=f"{curve}-{projection.name}-b{bits}",
+        name=f"{curve}-{projection.name}-b{bits}{suffix}",
         projection=projection,
         curve=_build_curve(curve, projection.dims, bits),
         anchors=anchors,

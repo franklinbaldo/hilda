@@ -44,6 +44,19 @@ class ResidualKMeansEncoder:
             residual = residual - codebook[chosen]
         return self.layout.pack(digits)
 
+    def reconstruct(self, points: np.ndarray) -> np.ndarray:
+        """Sum the codewords each point selects, stage by stage."""
+        residual = np.atleast_2d(points).astype(np.float64)
+        total = np.zeros_like(residual)
+        for codebook in self.codebooks:
+            chosen = np.argmin(
+                ((residual[:, None, :] - codebook[None, :, :]) ** 2).sum(axis=2),
+                axis=1,
+            )
+            total = total + codebook[chosen]
+            residual = residual - codebook[chosen]
+        return total
+
     def probe(
         self,
         query: np.ndarray,

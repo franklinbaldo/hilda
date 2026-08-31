@@ -25,6 +25,7 @@ from hilda_ablation.evaluation import (
     exact_neighbours,
     measure,
 )
+from hilda_ablation.geometry import unit_norm
 from hilda_ablation.projections import fit_pca, fit_random_projection
 
 if TYPE_CHECKING:
@@ -39,7 +40,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SEMANTIC_BITS = 60
-"""The HILDA semantic field: 128 bits minus version, timestamp and tie-break."""
+"""The HILDA semantic field: 128 bits minus version, timestamp and tie-break.
+
+This is the ceiling on a full code, not the width every family is compared at.
+The sweep compares families at matched *prefix* bits; see `SweepGrid`.
+"""
 
 
 @dataclass(frozen=True)
@@ -68,8 +73,12 @@ class RosterConfig:
 
     sfc_dims: tuple[int, ...] = (2, 3, 4)
     random_projection_seeds: tuple[int, ...] = (0, 1, 2, 3, 4)
-    quantiser_shapes: tuple[tuple[int, int], ...] = ((4, 8), (6, 4))
+    quantiser_shapes: tuple[tuple[int, int], ...] = ((4, 8), (6, 4), (4, 16), (5, 16))
     include_rqvae: bool = True
+    include_legacy: bool = True
+    normalise: bool = True
+    """Fit and probe on the unit sphere, the geometry the ground truth uses."""
+
     seed: int = 0
 
 
@@ -92,6 +101,16 @@ def _sfc_family(points: np.ndarray, config: RosterConfig) -> list[Encoder]:
         )
         for seed in config.random_projection_seeds
     )
+    if config.include_legacy:
+        encoders.append(
+            fit_sfc(
+                points,
+                projection=fit_pca(points, dims=2),
+                bits=SEMANTIC_BITS // 2,
+                curve="hilbert",
+                scaling="minmax",
+            )
+        )
     return encoders
 
 
@@ -118,8 +137,12 @@ def _quantiser_family(points: np.ndarray, config: RosterConfig) -> list[Encoder]
     return encoders
 
 
-def _fit_rqvae_or_skip(points: np.ndarray, config: RosterConfig) -> Encoder | None:
-    """Fit the learned variant, or report that torch is absent."""
+def _fit_learned_or_skip(points: np.ndarray, config: RosterConfig) -> list[Encoder]:
+    """Fit the learned variants, or report that torch is absent.
+
+    Both are fitted: the jointly trained RQ-VAE and the post-hoc `ae+rvq`, so
+    whether joint training pays is measured rather than asserted.
+    """
     from hilda_ablation.encoders.rqvae import (  # noqa: PLC0415
         RqVaeSpec,
         TorchMissingError,
@@ -127,22 +150,25 @@ def _fit_rqvae_or_skip(points: np.ndarray, config: RosterConfig) -> Encoder | No
     )
 
     levels, branching = config.quantiser_shapes[0]
-    spec = RqVaeSpec(levels=levels, branching=branching, seed=config.seed)
+    specs = [
+        RqVaeSpec(levels=levels, branching=branching, seed=config.seed, joint=joint)
+        for joint in (True, False)
+    ]
     try:
-        return fit_rqvae(points, spec)
+        return [fit_rqvae(points, spec) for spec in specs]
     except TorchMissingError:
-        logger.warning("skipping rqvae: torch is not installed")
-        return None
+        logger.warning("skipping the learned variants: torch is not installed")
+        return []
 
 
 def build_roster(points: np.ndarray, config: RosterConfig) -> list[Encoder]:
     """Fit every encoder under a shared 60-bit semantic budget."""
-    encoders: list[Encoder | None] = []
+    encoders: list[Encoder] = []
     encoders.extend(_sfc_family(points, config))
     encoders.extend(_quantiser_family(points, config))
     if config.include_rqvae:
-        encoders.append(_fit_rqvae_or_skip(points, config))
-    return [encoder for encoder in encoders if encoder is not None]
+        encoders.extend(_fit_learned_or_skip(points, config))
+    return encoders
 
 
 @dataclass
@@ -173,18 +199,21 @@ def run_ablation(
     grid: SweepGrid,
 ) -> AblationResult:
     """Fit the roster on the corpus and measure it against exact cosine truth."""
+    documents = unit_norm(corpus.documents) if roster.normalise else corpus.documents
+    probes = unit_norm(corpus.queries) if roster.normalise else corpus.queries
     queries = QuerySet(
-        queries=corpus.queries,
-        truth=exact_neighbours(corpus.documents, corpus.queries, k=grid.k),
+        queries=probes,
+        truth=exact_neighbours(documents, probes, k=grid.k),
     )
     result = AblationResult()
+    result.notes["normalised"] = float(roster.normalise)
     for dims in roster.sfc_dims:
-        projection = fit_pca(corpus.documents, dims=dims)
+        projection = fit_pca(documents, dims=dims)
         result.notes[f"pca{dims}_explained_variance"] = (
             projection.explained_variance_ratio
         )
-    for encoder in build_roster(corpus.documents, roster):
-        index = CodeIndex(codes=encoder.encode(corpus.documents))
+    for encoder in build_roster(documents, roster):
+        index = CodeIndex(codes=encoder.encode(documents))
         logger.info("measuring %s", encoder.name)
         for bits, depth in grid.depths_for(encoder):
             for probes in grid.probes:

@@ -34,7 +34,9 @@ def _fit_node(points: np.ndarray, levels: int, branching: int, seed: int) -> _No
     children: list[_Node | None] = []
     for label in range(clusters):
         members = points[kmeans.labels_ == label]
-        if levels <= 1 or len(members) <= 1:
+        if levels <= 1 or len(members) < branching:
+            # Fewer points than clusters is not a split but a relabelling: the
+            # node becomes a leaf and the remaining digits stay zero.
             children.append(None)
             continue
         children.append(_fit_node(members, levels - 1, branching, seed))

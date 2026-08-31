@@ -34,7 +34,8 @@ class Point:
     depth: int
     n_probes: int
     recall: float
-    fraction_scanned: float
+    scan_mean: float
+    scan_p95: float
     n_ranges: float
 
     @property
@@ -52,7 +53,8 @@ def read_points(path: Path) -> list[Point]:
                 depth=int(row["depth"]),
                 n_probes=int(row["n_probes"]),
                 recall=float(row["recall"]),
-                fraction_scanned=float(row["fraction_scanned"]),
+                scan_mean=float(row["scan_mean"]),
+                scan_p95=float(row["scan_p95"]),
                 n_ranges=float(row["n_ranges"]),
             )
             for row in csv.DictReader(handle)
@@ -60,8 +62,12 @@ def read_points(path: Path) -> list[Point]:
 
 
 def best_within(points: list[Point], budget: float) -> Point | None:
-    """Return the highest-recall point that stays inside a scan budget."""
-    affordable = [p for p in points if p.fraction_scanned <= budget]
+    """Return the highest-recall point whose *mean* scan stays inside a budget.
+
+    The budget binds on the average query, not on every query, which is why the
+    rendered cell carries the p95 alongside.
+    """
+    affordable = [p for p in points if p.scan_mean <= budget]
     if not affordable:
         return None
     return max(affordable, key=lambda p: (p.recall, -p.n_ranges))
@@ -78,10 +84,12 @@ def _cell(points: list[Point], budget: float) -> str:
         return "—"
     recalls = [b.recall for b in found]
     ranges = statistics.mean(b.n_ranges for b in found)
+    tail = statistics.mean(b.scan_p95 for b in found)
+    detail = f"({ranges:.0f}r · p95 {tail:.1%})"
     if len(found) == 1:
-        return f"{recalls[0]:.3f} ({ranges:.0f}r)"
+        return f"{recalls[0]:.3f} {detail}"
     spread = statistics.stdev(recalls) if len(recalls) > 1 else 0.0
-    return f"{statistics.mean(recalls):.3f}±{spread:.3f} ({ranges:.0f}r)"
+    return f"{statistics.mean(recalls):.3f}±{spread:.3f} {detail}"
 
 
 def read_notes(path: Path) -> dict[str, float]:
@@ -97,12 +105,14 @@ def render(points: list[Point], notes: dict[str, float]) -> str:
     families: dict[str, list[Point]] = {}
     for point in points:
         families.setdefault(point.family, []).append(point)
-    header = " | ".join(f"≤{b:.1%} scanned" for b in BUDGETS)
+    header = " | ".join(f"mean scan ≤{b:.1%}" for b in BUDGETS)
     lines = [
         "# HILDA representation ablation",
         "",
-        "recall@10 reachable within a scan budget; (Nr) is the mean number of",
-        "separate B-tree ranges that scan takes.",
+        "recall@10 reachable while the *mean* per-query scan stays inside a",
+        "budget. `Nr` is the mean number of separate B-tree ranges that scan",
+        "takes; `p95` is the 95th-percentile per-query scan fraction, which is",
+        "what a single unlucky query actually pays.",
         "",
         f"| encoder | {header} |",
         "|---|" + "---|" * len(BUDGETS),
