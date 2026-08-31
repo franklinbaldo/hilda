@@ -220,6 +220,11 @@ class PostgresServer:
         self._spec = spec
         self._cgroup = cgroup
 
+    @property
+    def spec(self) -> ServerSpec:
+        """The specification this server was started from."""
+        return self._spec
+
     def _run(self, argv: Sequence[str], *, in_cgroup: bool, check: bool = True) -> None:
         """Run one control binary as the server user, optionally inside the cgroup.
 
