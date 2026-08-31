@@ -26,8 +26,36 @@ what a single unlucky query actually pays.
 | `hilbert-pca2-b30-minmax` | 0.032 (2r · p95 0.8%) | 0.059 (3r · p95 1.6%) | 0.102 (9r · p95 3.1%) | 0.193 (6r · p95 5.9%) |
 | `hilbert-rp2-b30` | 0.012±0.003 (3r · p95 0.5%) | 0.022±0.005 (3r · p95 1.0%) | 0.042±0.007 (5r · p95 1.8%) | 0.079±0.013 (2r · p95 3.6%) |
 
+## At a per-query candidate budget
+
+Every encoder spends the same candidates on *every* query: cells are
+scanned nearest-first and truncated at the budget. No averaging hides
+an expensive query here.
+
+| encoder | 40 cand (0.5%) | 80 cand (1.0%) | 160 cand (2.0%) | 400 cand (5.0%) |
+|---|---|---|---|---|
+| `hkmeans-L4xK8` | 0.617 (7r) | 0.756 (12r) | 0.868 (24r) | 0.953 (54r) |
+| `hkmeans-L4xK16` | 0.594 (8r) | 0.749 (15r) | 0.861 (24r) | 0.948 (55r) |
+| `hkmeans-L5xK16` | 0.594 (8r) | 0.749 (15r) | 0.861 (24r) | 0.948 (55r) |
+| `hkmeans-L6xK4` | 0.568 (6r) | 0.692 (10r) | 0.815 (19r) | 0.922 (43r) |
+| `rvq-L4xK16` | 0.452 (22r) | 0.559 (36r) | 0.692 (24r) | 0.869 (54r) |
+| `rvq-L5xK16` | 0.452 (22r) | 0.559 (36r) | 0.693 (24r) | 0.869 (54r) |
+| `rvq-L4xK8` | 0.311 (6r) | 0.473 (12r) | 0.658 (22r) | 0.844 (51r) |
+| `ae+rvq-L4xK8` | 0.325 (9r) | 0.485 (17r) | 0.638 (33r) | 0.820 (71r) |
+| `rvq-L6xK4` | 0.262 (6r) | 0.431 (10r) | 0.610 (18r) | 0.807 (46r) |
+| `rqvae-L4xK8` | 0.241 (5r) | 0.383 (10r) | 0.554 (18r) | 0.786 (43r) |
+| `hilbert-pca4-b15` | 0.115 (8r) | 0.191 (13r) | 0.311 (22r) | 0.523 (45r) |
+| `morton-pca4-b15` | 0.115 (9r) | 0.192 (15r) | 0.311 (26r) | 0.522 (55r) |
+| `hilbert-pca3-b20` | 0.081 (7r) | 0.149 (11r) | 0.249 (18r) | 0.445 (35r) |
+| `morton-pca3-b20` | 0.082 (8r) | 0.149 (13r) | 0.251 (23r) | 0.445 (43r) |
+| `hilbert-pca2-b30-minmax` | 0.043 (2r) | 0.088 (14r) | 0.163 (7r) | 0.335 (5r) |
+| `hilbert-pca2-b30` | 0.047 (1r) | 0.088 (3r) | 0.161 (1r) | 0.335 (3r) |
+| `morton-pca2-b30` | 0.046 (3r) | 0.088 (12r) | 0.160 (19r) | 0.333 (11r) |
+| `hilbert-rp2-b30` | 0.015±0.003 (2r) | 0.028±0.006 (11r) | 0.052±0.009 (5r) | 0.119±0.017 (17r) |
+
 ## Run record
 
+- corpus_size: 8000.0000
 - normalised: 1.0000
 - pca2_explained_variance: 0.0720
 - pca3_explained_variance: 0.0962

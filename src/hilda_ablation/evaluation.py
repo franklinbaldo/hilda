@@ -75,6 +75,47 @@ class CodeIndex:
         )
 
 
+PROBE_CEILING = 256
+"""How wide a probe the budget walk may open before giving up on filling it."""
+
+
+def take_budget(
+    encoder: Encoder,
+    index: CodeIndex,
+    query: np.ndarray,
+    depth: int,
+    budget: int,
+) -> ScanResult:
+    """Scan cells nearest-first and stop at `budget` candidates for this query.
+
+    A budget met on average is not a budget: unbalanced cells let one query pay
+    far more than the mean while the table still calls it cheap. Truncating
+    nearest-first gives every encoder the same candidate count on every query.
+    """
+    cells = encoder.probe(query, depth=depth, n_probes=PROBE_CEILING)
+    taken: list[np.ndarray] = []
+    spent: list[IndexRange] = []
+    remaining = budget
+    for cell in cells:
+        span = encoder.layout.prefix_range(cell)
+        members = index.scan([span]).members
+        if members.size == 0:
+            continue
+        taken.append(members[:remaining])
+        spent.append(span)
+        remaining -= min(members.size, remaining)
+        if remaining <= 0:
+            break
+    if not taken:
+        return ScanResult(members=np.array([], dtype=np.int64), n_scanned=0, n_ranges=0)
+    members = np.concatenate(taken)
+    return ScanResult(
+        members=members,
+        n_scanned=int(members.size),
+        n_ranges=len(merge_ranges(spent)),
+    )
+
+
 @dataclass(frozen=True)
 class ScanDistribution:
     """Per-query scan cost. A budget met on average is not a budget per query."""
@@ -102,6 +143,7 @@ class OperatingPoint:
     encoder: str
     depth: int
     n_probes: int
+    budgeted: bool
     recall: float
     recall_stderr: float
     scanned: ScanDistribution
@@ -113,6 +155,7 @@ class OperatingPoint:
             "encoder": self.encoder,
             "depth": self.depth,
             "n_probes": self.n_probes,
+            "budgeted": int(self.budgeted),
             "recall": round(self.recall, 4),
             "recall_stderr": round(self.recall_stderr, 4),
             "scan_mean": round(self.scanned.mean, 5),
@@ -138,10 +181,38 @@ class QuerySet:
 
 @dataclass(frozen=True)
 class Setting:
-    """One operating point of an encoder: how deep to address, how wide to probe."""
+    """One operating point of an encoder: how deep to address, how wide to probe.
+
+    `n_probes` is a probe width; `budget` instead caps candidates per query, and
+    the two are alternatives, not a pair.
+    """
 
     depth: int
-    n_probes: int
+    n_probes: int | None = None
+    budget: int | None = None
+
+    def __post_init__(self) -> None:
+        """Reject a setting that names neither cost or both."""
+        if (self.n_probes is None) == (self.budget is None):
+            message = "set exactly one of n_probes and budget"
+            raise ValueError(message)
+
+    @property
+    def width(self) -> int:
+        """The cost knob's value, whichever knob this setting uses."""
+        return self.n_probes if self.n_probes is not None else self.budget
+
+
+def _plan(
+    encoder: Encoder, index: CodeIndex, query: np.ndarray, setting: Setting
+) -> ScanResult:
+    """Run one query's scan plan, by probe width or by candidate budget."""
+    if setting.budget is not None:
+        return take_budget(
+            encoder, index, query, depth=setting.depth, budget=setting.budget
+        )
+    cells = encoder.probe(query, depth=setting.depth, n_probes=setting.n_probes)
+    return index.scan([encoder.layout.prefix_range(cell) for cell in cells])
 
 
 def measure(
@@ -156,15 +227,15 @@ def measure(
     scanned = np.zeros(len(queries.queries))
     ranges = np.zeros(len(queries.queries))
     for i, query in enumerate(queries.queries):
-        cells = encoder.probe(query, depth=setting.depth, n_probes=setting.n_probes)
-        result = index.scan([encoder.layout.prefix_range(cell) for cell in cells])
+        result = _plan(encoder, index, query, setting)
         recalls[i] = np.isin(queries.truth[i], result.members).sum() / queries.k
         scanned[i] = result.n_scanned / corpus_size
         ranges[i] = result.n_ranges
     return OperatingPoint(
         encoder=encoder.name,
         depth=setting.depth,
-        n_probes=setting.n_probes,
+        n_probes=setting.width,
+        budgeted=setting.budget is not None,
         recall=float(recalls.mean()),
         recall_stderr=float(recalls.std(ddof=1) / np.sqrt(len(recalls))),
         scanned=ScanDistribution.of(scanned),

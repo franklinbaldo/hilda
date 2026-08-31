@@ -53,7 +53,23 @@ class SweepGrid:
 
     prefix_bits: tuple[int, ...] = (4, 6, 8, 10, 12, 14, 16, 20)
     probes: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64)
+    budgets: tuple[float, ...] = (0.005, 0.01, 0.02, 0.05)
+    """Per-query candidate budgets, as a share of the corpus.
+
+    The probe sweep traces what each encoder reaches at a given width; these
+    force every encoder to spend the same candidates on every single query.
+    """
+
     k: int = 10
+
+    def settings_for(self, depth: int, corpus_size: int) -> list[Setting]:
+        """Every operating point measured at one depth: widths, then budgets."""
+        widths = [Setting(depth=depth, n_probes=probes) for probes in self.probes]
+        capped = [
+            Setting(depth=depth, budget=max(1, round(share * corpus_size)))
+            for share in self.budgets
+        ]
+        return widths + capped
 
     def depths_for(self, encoder: Encoder) -> list[tuple[int, int]]:
         """Return the depths this layout can reach, with the bits they spend."""
@@ -207,6 +223,7 @@ def run_ablation(
     )
     result = AblationResult()
     result.notes["normalised"] = float(roster.normalise)
+    result.notes["corpus_size"] = float(len(documents))
     for dims in roster.sfc_dims:
         projection = fit_pca(documents, dims=dims)
         result.notes[f"pca{dims}_explained_variance"] = (
@@ -216,15 +233,10 @@ def run_ablation(
         index = CodeIndex(codes=encoder.encode(documents))
         logger.info("measuring %s", encoder.name)
         for bits, depth in grid.depths_for(encoder):
-            for probes in grid.probes:
-                point = measure(
-                    encoder,
-                    index,
-                    queries,
-                    Setting(depth=depth, n_probes=probes),
-                )
+            for setting in grid.settings_for(depth, len(documents)):
+                point = measure(encoder, index, queries, setting)
                 result.points.append(point)
                 logger.debug(
-                    "%s /%d x%d %.3f", encoder.name, bits, probes, point.recall
+                    "%s /%d x%d %.3f", encoder.name, bits, setting.width, point.recall
                 )
     return result

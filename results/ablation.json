@@ -1,4 +1,5 @@
 {
+  "corpus_size": 8000.0,
   "normalised": 1.0,
   "pca2_explained_variance": 0.07200368443595753,
   "pca3_explained_variance": 0.09618191220257136,

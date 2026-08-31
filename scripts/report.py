@@ -34,6 +34,7 @@ class Point:
     depth: int
     n_probes: int
     recall: float
+    budgeted: bool
     scan_mean: float
     scan_p95: float
     n_ranges: float
@@ -53,6 +54,7 @@ def read_points(path: Path) -> list[Point]:
                 depth=int(row["depth"]),
                 n_probes=int(row["n_probes"]),
                 recall=float(row["recall"]),
+                budgeted=bool(int(row["budgeted"])),
                 scan_mean=float(row["scan_mean"]),
                 scan_p95=float(row["scan_p95"]),
                 n_ranges=float(row["n_ranges"]),
@@ -100,11 +102,72 @@ def read_notes(path: Path) -> dict[str, float]:
     return json.loads(sidecar.read_text())
 
 
-def render(points: list[Point], notes: dict[str, float]) -> str:
-    """Render the recall-within-budget table, with range counts in brackets."""
+def _families(points: list[Point]) -> dict[str, list[Point]]:
+    """Group operating points by family, pooling a variant's seeds."""
     families: dict[str, list[Point]] = {}
     for point in points:
         families.setdefault(point.family, []).append(point)
+    return families
+
+
+def _budget_cell(points: list[Point], candidates: int) -> str:
+    """Format one family's best point at one per-query candidate budget."""
+    per_seed: dict[str, list[Point]] = {}
+    for point in points:
+        if point.budgeted and point.n_probes == candidates:
+            per_seed.setdefault(point.encoder, []).append(point)
+    if not per_seed:
+        return "—"
+    bests = [max(group, key=lambda p: p.recall) for group in per_seed.values()]
+    recalls = [b.recall for b in bests]
+    ranges = statistics.mean(b.n_ranges for b in bests)
+    if len(bests) == 1:
+        return f"{recalls[0]:.3f} ({ranges:.0f}r)"
+    spread = statistics.stdev(recalls) if len(recalls) > 1 else 0.0
+    return f"{statistics.mean(recalls):.3f}±{spread:.3f} ({ranges:.0f}r)"
+
+
+def render_budget_table(points: list[Point], corpus_size: float) -> list[str]:
+    """Render recall at candidate budgets imposed on every single query."""
+    candidates = sorted({p.n_probes for p in points if p.budgeted})
+    if not candidates:
+        return []
+    families = _families(points)
+    shares = [f"{c} cand ({c / corpus_size:.1%})" for c in candidates]
+    lines = [
+        "",
+        "## At a per-query candidate budget",
+        "",
+        "Every encoder spends the same candidates on *every* query: cells are",
+        "scanned nearest-first and truncated at the budget. No averaging hides",
+        "an expensive query here.",
+        "",
+        f"| encoder | {' | '.join(shares)} |",
+        "|---|" + "---|" * len(candidates),
+    ]
+    ordered = sorted(
+        families.items(),
+        key=lambda item: (
+            -max(
+                (
+                    p.recall
+                    for p in item[1]
+                    if p.budgeted and p.n_probes == candidates[-1]
+                ),
+                default=0.0,
+            )
+        ),
+    )
+    for name, group in ordered:
+        cells = " | ".join(_budget_cell(group, c) for c in candidates)
+        lines.append(f"| `{name}` | {cells} |")
+    return lines
+
+
+def render(points: list[Point], notes: dict[str, float]) -> str:
+    """Render the recall-within-budget table, with range counts in brackets."""
+    width = [p for p in points if not p.budgeted]
+    families = _families(width)
     header = " | ".join(f"mean scan ≤{b:.1%}" for b in BUDGETS)
     lines = [
         "# HILDA representation ablation",
@@ -126,6 +189,7 @@ def render(points: list[Point], notes: dict[str, float]) -> str:
     for name, group in ordered:
         cells = " | ".join(_cell(group, budget) for budget in BUDGETS)
         lines.append(f"| `{name}` | {cells} |")
+    lines.extend(render_budget_table(points, notes.get("corpus_size", 1.0)))
     if notes:
         lines.extend(["", "## Run record", ""])
         lines.extend(f"- {key}: {value:.4f}" for key, value in sorted(notes.items()))
