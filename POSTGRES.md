@@ -61,8 +61,28 @@ The exact scan necessarily grows with the whole table. The range scan's cost
 tracks the candidates it retrieves, so the advantage widens **only if the
 candidate budget needed to hold recall grows sublinearly with the corpus**. It
 may not: more points per cell, or worse locality at the same prefix depth,
-could force a wider window to keep 0.958. Measuring that curve is the next
-experiment, and this benchmark does not settle it.
+could force a wider window to keep the same recall.
+
+That hypothesis now has a dedicated scale ladder. Build one Wikipedia embedding
+matrix with the largest corpus plus held-out queries, then run nested prefixes:
+
+```bash
+uv run scripts/build_wikipedia_corpus.py --size 300200
+uv run scripts/run_scaling_benchmark.py \
+  --input data/wikipedia.npy \
+  --rungs 10000,30000,100000,300000 \
+  --queries 200 \
+  --target-recall 0.95
+```
+
+The builder keeps one bounded text/embedding batch in memory and writes directly
+to an NPY memmap. The runner reserves the final query rows outside every corpus,
+uses validation queries to select depth and the smallest per-query candidate
+budget reaching the target, freezes that operating point, and reports held-out
+recall. It fits `budget ≈ N^alpha`: `alpha < 1` is the evidence needed for
+sublinear candidate growth; `alpha ≈ 1` falsifies the hoped-for scaling
+advantage. Until `results/scaling.json` exists from a completed run, neither
+outcome is claimed here.
 
 So the cheap index is not merely cheap to keep; it is what buys the faster
 query in the regime where a vector index is not on the table.
@@ -93,20 +113,39 @@ separating rather than lumping into "where a vector index is impractical".
 |---|---|
 | 1. A vector index exists and is affordable | **Measured.** HILDA loses on both recall and latency. |
 | 2. No vector index is available — pgvector not installed, managed service without it | **Measured.** The alternative is the exact scan, and HILDA is 2.8x cheaper per query at −0.042 recall. |
-| 3. A vector index could exist, but its storage or rebuild cost makes it undesirable | **Not measured.** The index costs above (0.15 MB against 16.35 MB, 0.014 s against 1.851 s) are inputs to that argument, not the argument. Whether they dominate some real deployment's budget is a claim about that deployment. |
-| 4. The working set exceeds memory | **Not measured.** See below. |
+| 3. A vector index could exist, but its storage or rebuild cost makes it undesirable | **Not measured.** The index costs above (0.15 MB against 16.35 MB, 0.012 s against 2.335 s) are inputs to that argument, not the argument. Whether they dominate some real deployment's budget is a claim about that deployment. |
+| 4. The vector working set exceeds available memory | **Not measured.** It needs an explicit memory-pressure protocol; exceeding `shared_buffers` is not enough. |
 
 Regime 2 is a database capability; regime 3 is an economic decision. They may
 end up sharing a query strategy, but they need different evidence, and only
 one of them has any here.
 
+## The memory regime needs a separate protocol
+
+`shared_buffers` is not a process- or machine-memory limit. PostgreSQL also
+benefits from the operating system's page cache, so an index larger than
+`shared_buffers` can remain memory-resident. Likewise, `Shared Read Blocks`
+means PostgreSQL had to request blocks not already present in shared buffers;
+it does not prove a physical device read because the OS may satisfy that read
+from its own cache.
+
+A valid regime-4 experiment therefore must constrain **total available memory**,
+not merely lower `shared_buffers`. Run Postgres in a container or cgroup with a
+recorded memory limit, choose a corpus for which table plus vector index clearly
+exceed that limit, and report both warm and cold trials. The cold protocol must
+also control or evict the relevant OS cache; otherwise it is a shared-buffer
+miss experiment, not an out-of-memory experiment. Record at least latency,
+`shared_hit`, `shared_read`, table/index sizes, total memory limit, and the exact
+cache-reset procedure. Compare HILDA, HNSW/IVFFlat and the exact scan at stated
+recall points. No result from that regime should be inferred from the 8,000-row
+run.
+
 ## What this does not show
 
-- **Everything is cached.** `shared_read` is zero on every plan: the table, both
-  vector indexes and the B-tree all fit in 256 MB. HNSW traversal is random
-  access and degrades when the graph does not fit in memory, which is exactly
-  the regime where a sequential range scan could win. At 8,000 rows that regime
-  is not reached, and this benchmark cannot speak to it.
+- **The current run is warm.** `shared_read` is zero on the sampled plans. That
+  establishes that the blocks those warm queries touched were already in
+  PostgreSQL's shared buffers; it does not establish the size of the complete
+  working set and says nothing about disk behaviour under pressure.
 - **One machine, no concurrency.** Single client, warm cache, no competing
   load, latency including a local round trip.
 - **The recall ceiling is the encoder's.** The HILDA plan cannot exceed the
@@ -115,7 +154,7 @@ one of them has any here.
 - **pgvector 0.6.0.** Later versions changed HNSW build and search
   substantially.
 
-## Running it
+## Running the current Postgres comparison
 
 ```bash
 initdb -D "$PGDATA" -A trust -U postgres
