@@ -26,19 +26,33 @@ the raw numbers are in [results/postgres.json](results/postgres.json).
 
 | plan | recall@10 | p50 | p95 | shared hits |
 |---|---|---|---|---|
-| `hilda-btree+rerank` | 0.958 | 2.52 ms | 3.75 ms | 429 |
-| `pgvector-hnsw-ef40` | 0.992 | 1.14 ms | 1.88 ms | 516 |
-| `pgvector-hnsw-ef100` | 0.998 | 1.74 ms | 2.48 ms | 976 |
-| `pgvector-hnsw-ef200` | 1.000 | 2.89 ms | 4.46 ms | 1615 |
-| `pgvector-ivfflat-probes1` | 0.574 | 0.50 ms | 0.78 ms | 47 |
-| `pgvector-ivfflat-probes10` | 0.963 | 0.94 ms | 1.18 ms | 198 |
-| `pgvector-ivfflat-probes30` | 0.996 | 1.93 ms | 2.74 ms | 520 |
+| `postgres-seqscan-exact` | 1.000 | 5.90 ms | 7.85 ms | 1600 |
+| `hilda-btree+rerank` | 0.958 | 2.09 ms | 2.81 ms | 429 |
+| `pgvector-hnsw-ef40` | 0.992 | 1.03 ms | 1.68 ms | 539 |
+| `pgvector-hnsw-ef100` | 0.998 | 1.80 ms | 2.56 ms | 992 |
+| `pgvector-hnsw-ef200` | 1.000 | 2.76 ms | 3.76 ms | 1623 |
+| `pgvector-ivfflat-probes1` | 0.581 | 0.47 ms | 0.66 ms | 50 |
+| `pgvector-ivfflat-probes10` | 0.963 | 1.01 ms | 1.40 ms | 201 |
+| `pgvector-ivfflat-probes30` | 0.995 | 1.73 ms | 2.65 ms | 527 |
 
-**The operational thesis does not hold at this scale.** IVFFlat reaches the
-same recall as the HILDA plan (0.963 against 0.958) at 2.7x lower p50 latency
-and less than half the buffer traffic. HNSW at `ef_search = 40` beats it on
-both axes at once: higher recall (0.992) *and* lower latency (1.14 ms). There
-is no budget on this corpus where the range scan is the better query.
+The answer depends on what the range scan is being compared against, and the
+two comparisons point opposite ways.
+
+**Against a vector index, the range scan loses.** IVFFlat reaches the same
+recall (0.963 against 0.958) at half the p50 latency and half the buffer
+traffic. HNSW at `ef_search = 40` beats it on both axes at once: higher recall
+*and* lower latency. Where pgvector is available and its index affordable,
+there is no budget on this corpus where the range scan is the better query.
+
+**Against no vector index, the range scan wins clearly.** The exact sequential
+scan is the plan a deployment without pgvector actually runs, and it costs
+5.90 ms and 1,600 buffer hits. The range scan answers in 2.09 ms reading 429,
+giving up 4 points of recall: 2.8x faster on a quarter of the traffic. That
+gap should widen with corpus size, since the sequential scan grows with the
+table while the range scan grows with the candidate set.
+
+So the cheap index is not merely cheap to keep; it is what buys the faster
+query in the regime where a vector index is not on the table.
 
 ## Index cost
 
@@ -53,11 +67,14 @@ is 109x smaller than the HNSW index — smaller than the table's own 13 MB — a
 builds roughly 200x faster. A vector index here costs more to store than the
 data it indexes.
 
-So the trade is real but inverted from the paper's claim: the semantic ID does
-not buy a faster query, it buys an almost free index. Whether that matters
-depends on a workload where index build time and size dominate — frequent
-re-indexing, many small partitions, storage-bound deployments — not on query
-latency, which is what `PLAN.md` sets out to improve.
+Read together with the query table, this is the shape of the result: the
+semantic ID buys a fast-enough query at almost no index cost. That is a weaker
+claim than `PLAN.md`'s — it does not beat a vector index — and a more useful
+one than it sounds, because the regimes where 16 MB of index per shard is
+unaffordable are common: many small tenants, write-heavy tables that must be
+re-indexed, storage-bound deployments, or any Postgres without pgvector
+installed at all. In those, the alternative is the 5.90 ms sequential scan,
+not the 1.03 ms HNSW.
 
 ## What this does not show
 
@@ -68,6 +85,9 @@ latency, which is what `PLAN.md` sets out to improve.
   is not reached, and this benchmark cannot speak to it.
 - **One machine, no concurrency.** Single client, warm cache, no competing
   load, latency including a local round trip.
+- **The regimes are not priced.** "A vector index is unaffordable here" is an
+  assertion about someone's deployment, not something this benchmark measured.
+  What it measures is what each plan costs once that choice is made.
 - **The recall ceiling is the encoder's.** The HILDA plan cannot exceed the
   0.958 its operating point reaches; the vector indexes approach 1.0. Raising
   it means scanning more candidates, which widens the latency gap.

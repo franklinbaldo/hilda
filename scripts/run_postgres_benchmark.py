@@ -167,7 +167,12 @@ def measure_hilda(
 def measure_vector_index(
     connection: psycopg.Connection, queries: QuerySet, plan: str, setting: str
 ) -> PlanResult:
-    """Time pgvector's own plan under the given search setting."""
+    """Time an ORDER BY on the embedding under the given setting.
+
+    With a vector index present this is pgvector's own plan; with none, it is
+    the exact sequential scan, which is what a deployment without a vector
+    index actually pays.
+    """
     latencies: list[float] = []
     recalls: list[float] = []
     hits: list[float] = []
@@ -251,6 +256,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         with connection.cursor() as cursor:
             cursor.execute(f"ANALYZE {TABLE}")
+        results.append(
+            measure_vector_index(
+                connection,
+                test,
+                "postgres-seqscan-exact",
+                "SET enable_seqscan = on",
+            )
+        )
         results.append(measure_hilda(connection, encoder, test))
 
         logger.info("building hnsw")
