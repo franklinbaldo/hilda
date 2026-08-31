@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+data/
+*_run.log
+wiki_build.log
+scaling_run.log

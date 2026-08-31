@@ -1,0 +1,45 @@
+{
+  "encoder": "hkmeans-L4xK16",
+  "target_recall": 0.95,
+  "queries": 200,
+  "alpha": 0.3513819122065859,
+  "interpretation": "sublinear",
+  "rungs": [
+    {
+      "rows": 10000,
+      "depth": 3,
+      "budget": 857,
+      "budget_fraction": 0.0857,
+      "validation_recall": 0.951,
+      "test_recall": 0.9330000000000002,
+      "test_ranges": 105.49
+    },
+    {
+      "rows": 30000,
+      "depth": 4,
+      "budget": 1759,
+      "budget_fraction": 0.058633333333333336,
+      "validation_recall": 0.95,
+      "test_recall": 0.9520000000000001,
+      "test_ranges": 211.66
+    },
+    {
+      "rows": 100000,
+      "depth": 4,
+      "budget": 1935,
+      "budget_fraction": 0.01935,
+      "validation_recall": 0.95,
+      "test_recall": 0.9590000000000001,
+      "test_ranges": 227.87
+    },
+    {
+      "rows": 299800,
+      "depth": 4,
+      "budget": 3179,
+      "budget_fraction": 0.010603735823882588,
+      "validation_recall": 0.9500000000000002,
+      "test_recall": 0.935,
+      "test_ranges": 211.88
+    }
+  ]
+}

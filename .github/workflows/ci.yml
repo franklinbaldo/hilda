@@ -1,0 +1,26 @@
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Lint
+        run: uv run --frozen ruff check src tests scripts
+
+      - name: Check formatting
+        run: uv run --frozen ruff format --check src tests scripts
+
+      - name: Test
+        run: uv run --frozen --extra rqvae pytest tests -q

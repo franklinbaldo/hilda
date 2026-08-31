@@ -1,0 +1,47 @@
+[project]
+name = "hilda-ablation"
+version = "0.1.0"
+description = "Ablation harness for HILDA semantic-ID representations"
+requires-python = ">=3.11"
+dependencies = ["numpy>=2.0", "scikit-learn>=1.5"]
+
+[project.optional-dependencies]
+embed = ["sentence-transformers>=3.0"]
+rqvae = ["torch>=2.0"]
+postgres = [
+    "psycopg[binary]>=3.2",
+]
+
+[project.scripts]
+hilda-ablation = "hilda_ablation.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hilda_ablation"]
+
+[tool.ruff]
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+# Ruff documents these two as incompatible with `ruff format`; nothing else is ignored.
+ignore = ["COM812", "ISC001"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # pytest asserts are the point of a test module
+
+[[tool.uv.index]]
+# CI and the ablation both run on CPU; the default index pulls the CUDA wheel
+# set (cuBLAS, cuDNN, NCCL, Triton), gigabytes that never get used.
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.6"]
