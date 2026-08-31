@@ -124,13 +124,63 @@ def merge(payloads: list[dict[str, object]]) -> dict[str, object]:
     return merged
 
 
+FRONTIER_HEADER = "| recall | HILDA probes | HILDA p50 | HNSW ef | HNSW p50 | ratio |"
+FRONTIER_RULE = "|---|---|---|---|---|---|"
+
+
+def _pair(points: list[dict[str, object]]) -> list[tuple[dict, dict]]:
+    """Match each HILDA setting to the cheapest HNSW point that is not worse.
+
+    Pairing upward rather than to the nearest recall is deliberate: it hands
+    HILDA the most favourable comparison available, because the HNSW point it
+    is measured against returns at least as many true neighbours.
+    """
+    hilda = sorted(
+        (p for p in points if p["family"] == "hilda"), key=lambda p: p["recall"]
+    )
+    hnsw = sorted(
+        (p for p in points if p["family"] == "hnsw"), key=lambda p: p["recall"]
+    )
+    pairs = []
+    for point in hilda:
+        matched = [h for h in hnsw if h["recall"] >= point["recall"]]
+        if matched:
+            pairs.append((point, min(matched, key=lambda h: h["p50_ms"])))
+    return pairs
+
+
+def render_frontier(payload: dict[str, object]) -> str:
+    """Render both frontiers, matched on recall, one table per cap."""
+    lines = ["## The frontier, matched on recall", ""]
+    caps = sorted({int(p["limit_mb"]) for p in payload["points"]}, reverse=True)
+    for cap in caps:
+        points = [p for p in payload["points"] if p["limit_mb"] == cap]
+        ratio = next(p["achieved_ratio"] for p in points)
+        lines.extend([f"### {cap} MiB cap ({ratio:.2f} of the working set)", ""])
+        exact = next(p for p in points if p["family"] == "exact")
+        lines.append(f"Exact scan: {exact['p50_ms']:.2f} ms at recall 1.000.")
+        lines.extend(["", FRONTIER_HEADER, FRONTIER_RULE])
+        for left, right in _pair(points):
+            lines.append(
+                f"| {left['recall']:.3f} vs {right['recall']:.3f} "
+                f"| {left['setting']} | {left['p50_ms']:.2f} ms "
+                f"| {right['setting']} | {right['p50_ms']:.2f} ms "
+                f"| {left['p50_ms'] / right['p50_ms']:.2f}x |"
+            )
+        lines.append("")
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Read the benchmark JSON files and print their tables."""
     parser = argparse.ArgumentParser(description="Summarise the memory-pressure run")
     parser.add_argument("inputs", type=Path, nargs="+")
+    parser.add_argument("--frontier", type=Path)
     args = parser.parse_args(argv)
     payloads = [json.loads(path.read_text()) for path in args.inputs]
     print(render(merge(payloads)))  # noqa: T201
+    if args.frontier:
+        print(render_frontier(json.loads(args.frontier.read_text())))  # noqa: T201
     return 0
 
 
