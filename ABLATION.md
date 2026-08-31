@@ -175,4 +175,8 @@ seed while the post-hoc variant keeps them exactly.
 ```bash
 uv run pytest tests/
 uv run ruff check src tests scripts
+uv run ruff format --check src tests scripts
 ```
+
+The same three commands run on every push and pull request
+(`.github/workflows/ci.yml`), against the committed `uv.lock`.
