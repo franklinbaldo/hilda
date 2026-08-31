@@ -121,7 +121,9 @@ PCA(4) 11.5%.
   which plausibly favours the tree.
 - **Range counts are modelled, not measured.** `n_ranges` counts merged
   intervals over a sorted code column. It stands in for seeks; it is not a
-  Postgres plan, and no latency was measured.
+  Postgres plan. For the measured comparison against pgvector, see
+  [POSTGRES.md](POSTGRES.md) — where the range scan loses on latency at matched
+  recall and wins on index cost by two orders of magnitude.
 - **Normalisation changed nothing here.** `all-MiniLM-L6-v2` ends its pipeline
   with a normalisation module, so the cached embeddings already had unit norm
   to within 4.4e-08. Fitting on the unit sphere is still what the code does,
