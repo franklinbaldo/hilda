@@ -4,3 +4,4 @@ __pycache__/
 data/
 *_run.log
 wiki_build.log
+scaling_run.log
