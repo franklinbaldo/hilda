@@ -49,6 +49,13 @@ def range_scan_sql(
     several become a VALUES join, which it can turn into a bitmap of the same
     index. Either way nothing but the B-tree narrows the candidate set.
 
+    The re-rank sits outside an ``OFFSET 0`` subquery, which is an optimisation
+    fence. Without it, a table carrying a vector index lets the planner satisfy
+    the ``ORDER BY`` from that index and apply the code predicate as a filter --
+    a plan that reads the graph and merely happens to mention the codes, which
+    is not the plan under test. The fence changes nothing on a table with no
+    vector index, where the sort has no index to come from either way.
+
     Returns the statement and its parameters in order, so the caller never has
     to know where the query vector sits among them.
     """
@@ -68,7 +75,8 @@ def range_scan_sql(
         )
     params.extend((vector, limit))
     sql = (
-        f"SELECT d.id FROM {TABLE} AS d {where} "  # noqa: S608 - no user input
-        "ORDER BY d.embedding <=> %s LIMIT %s"
+        "SELECT c.id FROM ("  # noqa: S608 - no user input
+        f"SELECT d.id, d.embedding FROM {TABLE} AS d {where} OFFSET 0"
+        ") AS c ORDER BY c.embedding <=> %s LIMIT %s"
     )
     return sql, params
