@@ -81,8 +81,48 @@ uses validation queries to select depth and the smallest per-query candidate
 budget reaching the target, freezes that operating point, and reports held-out
 recall. It fits `budget ≈ N^alpha`: `alpha < 1` is the evidence needed for
 sublinear candidate growth; `alpha ≈ 1` falsifies the hoped-for scaling
-advantage. Until `results/scaling.json` exists from a completed run, neither
-outcome is claimed here.
+advantage.
+
+### The ladder, run
+
+300,000 Wikipedia lead paragraphs under the same embedder, rungs as nested
+prefixes, 200 held-out queries split into 100 that pick the operating point and
+100 that report it, target recall 0.95. Raw numbers in
+[results/scaling.json](results/scaling.json).
+
+| rows | depth | budget | budget as % of N | validation | test | ranges |
+|---|---|---|---|---|---|---|
+| 10,000 | 3 | 857 | 8.57% | 0.951 | 0.933 | 105 |
+| 30,000 | 4 | 1,759 | 5.86% | 0.950 | 0.952 | 212 |
+| 100,000 | 4 | 1,935 | 1.94% | 0.950 | 0.959 | 228 |
+| 299,800 | 4 | 3,179 | 1.06% | 0.950 | 0.935 | 212 |
+
+**alpha = 0.35.** The budget needed to hold recall grows far slower than the
+corpus: an 30x larger table needs 3.7x the candidates, and the share of the
+corpus scanned falls from 8.6% to 1.1%. Fitting only the three rungs that share
+a depth gives 0.25; the first rung selects depth 3 and sits slightly off the
+line either way. Both are far from 1.
+
+**The recall is flat, not sloping.** Test recall reads 0.933, 0.952, 0.959,
+0.935 against a 0.95 target, a spread of about one standard error for 100
+queries scoring recall@10, with no trend in N. That matters more than the
+exponent: had test recall fallen rung by rung, the curve would be describing
+quality decay under a fixed label rather than cost at fixed quality, and the
+exponent would be an artefact of the selection. It does not.
+
+**The range count stops growing.** Past the first rung the same query needs
+about 210 separate B-tree ranges regardless of corpus size. Sublinear
+candidates do not come with linear seeks, which is the version of this result
+that a query planner cares about. It is also a reminder that this operating
+point is far wider than the 64-probe point the latency benchmark above used:
+holding 0.95 recall at 300,000 rows costs 3,179 candidates across ~210 ranges,
+not 342 across a handful.
+
+What this does not license: the exponent is measured with everything resident
+in memory, and says nothing about how either plan behaves once the working set
+is not. Nor does it compare against HNSW at scale — a sublinear candidate
+budget is a statement about the range scan and the exact scan, not about the
+vector index.
 
 So the cheap index is not merely cheap to keep; it is what buys the faster
 query in the regime where a vector index is not on the table.
