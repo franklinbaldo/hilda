@@ -43,17 +43,19 @@ This is the central compatibility hypothesis. If useful future models require ch
 
 Equivalently, a later version must consume the previous version as part of its input and preserve every semantic assertion already made. Refinement to the right is a split of an existing cell. Generalisation to the left groups existing cells without repartitioning their contents. A new release must never perform an unconstrained global repartition and silently assign new meanings to old digits.
 
-## Explicit jitter for unresolved specialisation
+## Default jitter for unresolved specialisation
 
-HILDA must distinguish three states in the specialisation tail:
+HILDA distinguishes three states in the specialisation tail:
 
 1. **semantic** — this nibble is a classification assertion and is immutable;
 2. **unassigned** — no value is being asserted at this resolution;
-3. **jitter** — the user deliberately requests provisional entropy even though no semantic refinement is currently known.
+3. **jitter** — provisional entropy deliberately occupying unresolved specialisation capacity without claiming semantic meaning.
 
-Jitter is useful when an application wants more dispersion or local uniqueness inside a known semantic region before the ontology has enough resolution to classify that region further. It must never masquerade as semantic precision.
+**Jitter is the default policy.** When the known semantic path ends and capacity remains, a normal HILDA encoding appends tagged deterministic jitter. The user chooses how many jitter nibbles are desired. A zero-jitter encoding is an explicit opt-out rather than the default state.
 
-The amount of jitter is therefore an explicit **user-selected parameter**. The classifier determines the known semantic span; the caller determines how many provisional jitter nibbles are appended after that span, subject to the remaining 128-bit budget.
+Jitter is useful when an application wants dispersion or local uniqueness inside a known semantic region before the ontology has enough resolution to classify that region further. It must never masquerade as semantic precision.
+
+The amount of jitter is therefore an explicit **user-selected parameter** with a non-zero implementation default. The classifier determines the known semantic span; the caller determines how many provisional jitter nibbles follow it, subject to the remaining 128-bit budget. Implementations must expose the selected/default jitter length rather than silently choosing an uninspectable amount.
 
 Conceptually:
 
@@ -75,14 +77,14 @@ A minimal abstract grammar is:
 semantic-span | jitter-control | jitter-payload | remaining-headroom
 ```
 
-The jitter control must make at least these states distinguishable:
+The jitter control must distinguish at least:
 
 ```text
-0 = no jitter
-1 = jitter present
+0 = explicit zero-jitter opt-out
+1 = default deterministic jitter present
 ```
 
-Later framing may use additional control values for deterministic jitter, caller-supplied jitter, or other policies without changing the semantic path.
+Later framing may use additional control values for caller-supplied jitter or other policies without changing the semantic path.
 
 The **length** of jitter should be explicit rather than inferred from random-looking digits. A practical prototype can pair the control nibble with a length nibble (`0..15` jitter nibbles); longer encodings can be considered only if an application demonstrates a need for them.
 
@@ -90,13 +92,13 @@ The **length** of jitter should be explicit rather than inferred from random-loo
 
 Jitter is intentionally outside the semantic monotonicity invariant. A future HILDA version may replace jitter positions with newly discovered semantic refinements while preserving all previously asserted semantic nibbles.
 
-For reproducible IDs, the default jitter generator should be deterministic from stable inputs, for example:
+Default jitter itself must be deterministic from stable inputs, for example:
 
 ```text
 jitter = PRF(namespace, object-fingerprint, hilda-version, user-jitter-length)
 ```
 
-The user controls **how much** jitter is requested; the default implementation controls its deterministic derivation. An API may additionally permit caller-supplied jitter when the application explicitly wants that behavior, but it must remain tagged as non-semantic.
+Thus the default HILDA encoder remains deterministic: the same object, previous HILDA state, namespace, version and jitter length produce the same identifier. The user controls **how much** jitter is used; the implementation controls its deterministic derivation. An API may additionally permit caller-supplied jitter when explicitly requested, but it remains tagged as non-semantic.
 
 This gives a monotone information rule:
 
@@ -116,7 +118,7 @@ Replacing tagged jitter with semantic digits adds knowledge; it does not contrad
 
 Semantic prefix/span comparisons, quasar-region agreement and hierarchy metrics must ignore tagged jitter. Two objects that share the same semantic path but have different jitter remain in the same HILDA semantic region.
 
-Jitter may be useful for physical B-tree dispersion, collision management or application-level identity, but those are separate claims to benchmark. If jitter degrades range locality enough to erase HILDA's retrieval benefit, it should be restricted to positions outside the range-key portion or omitted for that application.
+Jitter may be useful for physical B-tree dispersion, collision management or application-level identity, but those are separate claims to benchmark. If jitter degrades range locality enough to erase HILDA's retrieval benefit, it should be restricted to positions outside the range-key portion for that application; this changes placement, not the default existence of jitter.
 
 ## Quasar anchoring
 
@@ -141,7 +143,7 @@ object
   -> coarse anchored region
   -> hierarchical local subclusters
   -> HILDA semantic address
-  -> optional tagged jitter
+  -> default tagged jitter
   -> UUID-compatible 128-bit encoding
 ```
 
@@ -219,7 +221,7 @@ Do not require raw coordinate alignment. The claim is only that quasar-relative 
 
 ## Experiment D — jitter semantics and locality
 
-For fixed semantic addresses, vary the user-requested jitter length over a preregistered ladder, including zero jitter.
+For fixed semantic addresses, vary the user-selected jitter length over a preregistered ladder centered on the implementation default and including an explicit zero-jitter control.
 
 Measure separately:
 
@@ -246,7 +248,7 @@ The quasar-anchored direction should be rejected or narrowed if any of these hol
 3. cross-observer agreement does not exceed matched random-anchor controls;
 4. incremental growth routinely requires changing already assigned semantic nibbles;
 5. the number of bits required for useful semantic structure leaves too little identity entropy for the target applications;
-6. jitter cannot be cleanly separated from semantic ordering or makes ordinary range indexing impractical at useful lengths.
+6. jitter cannot be cleanly separated from semantic ordering or makes ordinary range indexing impractical at useful default lengths.
 
 ## Near-term decision
 
