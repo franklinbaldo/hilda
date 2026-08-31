@@ -19,7 +19,8 @@ import argparse
 import json
 from pathlib import Path
 
-MEGABYTE = 1e6
+MEBIBYTE = 1024 * 1024
+"""The caps are set in mebibytes, so every size is reported in them too."""
 HEADER = (
     "| plan | recall | cap | cap / working set | cache "
     "| p50 | p95 | shared read | read time |"
@@ -32,7 +33,7 @@ def _row(cell: dict[str, object]) -> str:
     return (
         f"| `{cell['plan']}` "
         f"| {cell['recall']:.3f} "
-        f"| {cell['limit_mb']} MB "
+        f"| {cell['limit_mb']} MiB "
         f"| {cell['achieved_ratio']:.2f} "
         f"| {cell['cache']} "
         f"| {cell['latency_p50_ms']:.2f} ms "
@@ -55,10 +56,10 @@ def render_size(size: dict[str, object]) -> list[str]:
         f"### {size['rows']:,} rows",
         "",
         (
-            f"Working set {size['working_set_bytes'] / MEGABYTE:.0f} MB: "
-            f"table {size['table_bytes'] / MEGABYTE:.0f} MB, "
-            f"`hnsw_idx` {indexes['hnsw_idx'] / MEGABYTE:.0f} MB, "
-            f"`code_idx` {indexes['code_idx'] / MEGABYTE:.1f} MB. "
+            f"Working set {size['working_set_bytes'] / MEBIBYTE:.0f} MiB: "
+            f"table {size['table_bytes'] / MEBIBYTE:.0f} MiB, "
+            f"`hnsw_idx` {indexes['hnsw_idx'] / MEBIBYTE:.0f} MiB, "
+            f"`code_idx` {indexes['code_idx'] / MEBIBYTE:.1f} MiB. "
             f"HILDA at depth {setting['depth']}, {setting['probes']} probes; "
             f"HNSW at `ef_search` {size['hnsw_ef']}. "
             "Both chosen on validation queries."
@@ -78,7 +79,7 @@ def render(payload: dict[str, object]) -> str:
         "## Measured",
         "",
         (
-            f"Machine memory {payload['machine_memory_bytes'] / MEGABYTE:.0f} MB, "
+            f"Machine memory {payload['machine_memory_bytes'] / MEBIBYTE:.0f} MiB, "
             f"`shared_buffers` {payload['shared_buffers_mb']} MB held fixed, "
             f"recall@{payload['top_k']} against exact cosine, "
             f"target recall {payload['target_recall']}."

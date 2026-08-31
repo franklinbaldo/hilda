@@ -289,7 +289,7 @@ def _run_size(
     with psycopg.connect(spec.dsn, autocommit=True) as connection:
         sizes = load_table(connection, codes, documents)
         working_set = sizes["table"] + sizes["hnsw_idx"] + sizes["code_idx"]
-        logger.info("working set %.1f MB", working_set / 1e6)
+        logger.info("working set %.1f MiB", working_set / (1024 * 1024))
         ef = _select_ef(connection, validation, args.target_recall)
         plans = [exact_plan(), hilda_plan(encoder, depth=depth, probes=probes)]
         if ef is not None:
