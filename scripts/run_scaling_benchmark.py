@@ -150,14 +150,14 @@ def _run_rung(
     truth = exact_neighbours(documents, queries, k=TOP_K)
     validation, test = split_queries(QuerySet(queries=queries, truth=truth))
 
-    logger.info("fitting hkmeans-L%dxK%d on %,d rows", LEVELS, BRANCHING, rows)
+    logger.info("fitting hkmeans-L%dxK%d on %d rows", LEVELS, BRANCHING, rows)
     encoder = fit_hierarchical_kmeans(
         documents, levels=LEVELS, branching=BRANCHING, seed=seed
     )
     index = CodeIndex(encoder.encode(documents))
     chosen = _best_setting(encoder, index, validation, target=target, ceiling=rows)
     if chosen is None:
-        logger.info("%,d rows: target %.3f unreachable", rows, target)
+        logger.info("%d rows: target %.3f unreachable", rows, target)
         return ScaleRow(rows, None, None, None, None, None, None)
 
     depth, budget, validation_recall = chosen
@@ -169,7 +169,7 @@ def _run_rung(
         split="test",
     )
     logger.info(
-        "%,d rows: depth=%d budget=%d (%.3f%%) validation=%.4f test=%.4f",
+        "%d rows: depth=%d budget=%d (%.3f%%) validation=%.4f test=%.4f",
         rows,
         depth,
         budget,
