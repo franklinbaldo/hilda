@@ -13,34 +13,38 @@ The question it answers:
 
 ## Results
 
-Corpus: 8,000 documents from 20 newsgroups, embedded with
-`all-MiniLM-L6-v2`; 200 held-out queries; ground truth is exact cosine top-10.
+Corpus: 8,000 documents from 20 newsgroups, embedded with `all-MiniLM-L6-v2`;
+400 held-out queries, split into 200 for choosing the depth and 200 for
+reporting; ground truth is exact cosine top-10.
 Every encoder is fitted, encoded and probed on the unit sphere, which is the
 geometry the ground truth scores in. See [results/REPORT.md](results/REPORT.md)
 for the generated table and [results/ablation.csv](results/ablation.csv) for
 every operating point.
 
 Two tables. The first selects operating points by *mean* scan fraction; the
-second imposes the budget on every single query, by scanning cells
-nearest-first and truncating at the candidate count. The second is the
-stricter comparison and the one to read first.
+second imposes the budget on every single query, by visiting cells
+nearest-first and truncating the boundary cell in index order, the way a range
+scan with a LIMIT would. The second is the stricter comparison and the one to
+read first. In it, the depth is chosen on the validation queries and reported
+on the test queries, so no number is selected on the queries it reports.
 
 recall@10 at a per-query candidate budget, with the mean number of separate
 B-tree ranges:
 
 | encoder | 80 cand (1%) | 400 cand (5%) |
 |---|---|---|
-| `hkmeans-L4xK8` | 0.756 (12r) | 0.953 (54r) |
-| `hkmeans-L4xK16` | 0.749 (15r) | 0.948 (55r) |
-| `hkmeans-L6xK4` | 0.692 (10r) | 0.922 (43r) |
-| `rvq-L4xK16` | 0.559 (36r) | 0.869 (54r) |
-| `rvq-L4xK8` | 0.473 (12r) | 0.844 (51r) |
-| `ae+rvq-L4xK8` | 0.485 (17r) | 0.820 (71r) |
-| `rqvae-L4xK8` | 0.383 (10r) | 0.786 (43r) |
-| `hilbert-pca4-b15` | 0.191 (13r) | 0.523 (45r) |
-| `hilbert-pca2-b30` | 0.088 (3r) | 0.335 (3r) |
-| `hilbert-pca2-b30-minmax` | 0.088 (14r) | 0.335 (5r) |
-| `hilbert-rp2-b30` | 0.028±0.006 (11r) | 0.119±0.017 (17r) |
+| `hkmeans-L4xK16` | 0.776 (15r) | 0.960 (56r) |
+| `hkmeans-L4xK8` | 0.765 (12r) | 0.955 (54r) |
+| `hkmeans-L6xK4` | 0.710 (11r) | 0.917 (43r) |
+| `rvq-L4xK16` | 0.631 (46r) | 0.878 (55r) |
+| `rvq-L4xK8` | 0.507 (11r) | 0.864 (52r) |
+| `ae+rvq-L4xK8` | 0.480 (17r) | 0.830 (72r) |
+| `rqvae-L4xK8` | 0.453 (11r) | 0.834 (49r) |
+| `hilbert-pca4-b15` | 0.222 (52r) | 0.541 (43r) |
+| `hilbert-pca3-b20` | 0.151 (11r) | 0.453 (37r) |
+| `hilbert-pca2-b30-minmax` | 0.100 (16r) | 0.356 (13r) |
+| `hilbert-pca2-b30` | 0.099 (3r) | 0.337 (3r) |
+| `hilbert-rp2-b30` | 0.032±0.006 (24r) | 0.125±0.012 (82r) |
 
 And recall@10 while the *mean* per-query scan stays inside a budget, with the
 95th-percentile per-query scan alongside:
@@ -62,18 +66,19 @@ And recall@10 while the *mean* per-query scan stays inside a budget, with the
 Seven findings:
 
 1. **Hierarchical k-means wins by a wide margin, under either accounting.**
-   At a strict 80-candidate-per-query budget it reaches 0.756 against 0.088
-   for PCA(2)+Hilbert, and at 400 candidates 0.953 against 0.335. Selecting by
-   mean scan instead gives 0.619 against 0.055 at 1%, and 0.938 against 0.298
-   at 5%. The margin does not come from the averaging.
+   At a strict 80-candidate-per-query budget it reaches 0.776 against 0.099
+   for PCA(2)+Hilbert, and at 400 candidates 0.960 against 0.337. Selecting by
+   mean scan instead gives 0.662 against 0.070 at 1%, and 0.958 against 0.298
+   at 5%. The margin does not come from the averaging, and it survives choosing
+   the depth on separate queries from the ones reported.
 2. **Its scan cost is also better behaved per query.** At a 1% mean budget the
-   tree's p95 is 0.8%, tighter than every SFC variant's (1.2% to 1.9%). The
+   tree's p95 is 0.9%, tighter than every SFC variant's (1.1% to 2.0%). The
    worry that unbalanced cells would flatter the tree runs the other way here.
 3. **The quantile grid's advantage was an artefact of the mean budget.** By
    mean scan, quantile scaling beats the repository's min-max grid 0.298 to
-   0.193 at 5%. Under a per-query candidate budget the two are identical to
-   three decimals (0.335, and 0.088 at 1%). The reparametrisation buys a
-   better-shaped scan, not better neighbours.
+   0.197 at 5%. Under a per-query candidate budget min-max is marginally ahead
+   (0.356 against 0.337). The reparametrisation buys a better-shaped scan, not
+   better neighbours.
 4. **More projection dimensions help inside the SFC family, and never enough
    to matter.** PCA(4) beats PCA(3) beats PCA(2) at every budget, so
    "maximise the PCA" is directionally right and strategically irrelevant:
@@ -84,11 +89,11 @@ Seven findings:
    Morton tie to three decimal places at every budget, while Hilbert
    consolidates the same candidates into fewer ranges. Locality preservation
    buys range consolidation, not recall.
-7. **Joint training pays under one accounting and not the other.** By mean
-   scan the RQ-VAE beats the post-hoc `ae+rvq` at 5% (0.714 against 0.628);
-   under a per-query budget the order reverses at every budget (0.786 against
-   0.820 at 400 candidates). Either way both trail plain residual k-means and
-   the tree, so the learned latent space is not what decides this.
+7. **Joint training makes little difference either way.** The RQ-VAE beats the
+   post-hoc `ae+rvq` by mean scan at 5% (0.726 against 0.633) and trades places
+   with it under a per-query budget (0.834 against 0.830 at 400 candidates,
+   0.453 against 0.480 at 80). Both trail plain residual k-means and the tree,
+   so the learned latent space is not what decides this.
 
 PCA(2) explains 7.2% of the embedding variance on this corpus, PCA(3) 9.6%,
 PCA(4) 11.5%.
@@ -106,6 +111,11 @@ PCA(4) 11.5%.
   factor, so at 8,000 documents `L5xK16` and `L4xK16` produce identical codes.
   The 5x12-bit shape that aligns with the 4,096-word codebook needs a corpus
   several orders of magnitude larger before it is a real configuration.
+- **Not every operating point can fill every budget.** At a deep prefix the
+  cells are small, so some depths cannot reach the candidate count even at the
+  widest probe tried; those points are recorded as unfilled and excluded from
+  the budget table, which is why `pca4` has no eligible entry at 160
+  candidates. The probe width escalates up to 4,096 cells before giving up.
 - **One corpus, one embedder, one k.** 20 newsgroups is topically coarse,
   which plausibly favours the tree.
 - **Range counts are modelled, not measured.** `n_ranges` counts merged
@@ -143,7 +153,7 @@ what makes the families comparable.
 | `encoders/tree.py` | hierarchical k-means |
 | `encoders/residual.py` | residual vector quantisation |
 | `encoders/rqvae.py` | RQ-VAE, and the post-hoc `ae+rvq` to measure it against |
-| `evaluation.py` | ground truth, range scans, per-query budgets, the costs |
+| `evaluation.py` | ground truth, range scans, per-query budgets, the splits |
 | `runner.py` | the roster, swept by prefix bits |
 
 The learned variant trains encoder, decoder and codebooks together, with a
@@ -151,6 +161,10 @@ straight-through estimator carrying the gradient through the lookup, after a
 warm-up that seeds the codebooks by k-means. Freezing the autoencoder and
 fitting codebooks afterwards is a different and weaker model; it ships as
 `ae+rvq` so the difference is measured rather than assumed.
+
+The held-out queries are halved: the first half picks each encoder's depth,
+the second half is what the budget table reports, so no number is selected on
+the queries it reports.
 
 Tests cover the properties the whole scheme rests on: that a curve index is a
 bijection, that successive Hilbert indices are grid neighbours, that a code

@@ -75,8 +75,14 @@ class CodeIndex:
         )
 
 
-PROBE_CEILING = 256
-"""How wide a probe the budget walk may open before giving up on filling it."""
+PROBE_STEPS = (16, 64, 256, 1024, 4096)
+"""Probe widths tried in turn until a query's candidate budget is filled.
+
+A fixed width is not a fair cap: at a deep prefix the cells are small, so a
+width that fills the budget for one encoder starves another, and the shortfall
+would read as low recall. Widening until the budget is filled, or until the
+depth has no more cells, keeps the comparison about the representation.
+"""
 
 
 def take_budget(
@@ -89,10 +95,31 @@ def take_budget(
     """Scan cells nearest-first and stop at `budget` candidates for this query.
 
     A budget met on average is not a budget: unbalanced cells let one query pay
-    far more than the mean while the table still calls it cheap. Truncating
-    nearest-first gives every encoder the same candidate count on every query.
+    far more than the mean while the table still calls it cheap. Capping the
+    count gives every encoder the same candidates on every query.
+
+    Cells are visited nearest-first, but the cell that crosses the budget is
+    truncated in index order, not by distance to the query. That models a range
+    scan with a LIMIT, which is what an ordered index actually offers; it does
+    not model a distance-ranked take.
     """
-    cells = encoder.probe(query, depth=depth, n_probes=PROBE_CEILING)
+    cells_at_depth = 1 << sum(encoder.layout.digit_bits[:depth])
+    result = ScanResult(members=np.array([], dtype=np.int64), n_scanned=0, n_ranges=0)
+    for width in PROBE_STEPS:
+        cells = encoder.probe(query, depth=depth, n_probes=width)
+        result = _fill(encoder, index, cells, budget)
+        if result.n_scanned >= budget or width >= cells_at_depth:
+            break
+    return result
+
+
+def _fill(
+    encoder: Encoder,
+    index: CodeIndex,
+    cells: list[tuple[int, ...]],
+    budget: int,
+) -> ScanResult:
+    """Take candidates from the given cells, in order, up to the budget."""
     taken: list[np.ndarray] = []
     spent: list[IndexRange] = []
     remaining = budget
@@ -141,6 +168,7 @@ class OperatingPoint:
     """One (depth, probes) setting of one encoder, averaged over queries."""
 
     encoder: str
+    split: str
     depth: int
     n_probes: int
     budgeted: bool
@@ -148,11 +176,14 @@ class OperatingPoint:
     recall_stderr: float
     scanned: ScanDistribution
     n_ranges: float
+    budget_filled: float
+    """Share of queries whose scan actually reached the budget it was given."""
 
     def as_row(self) -> dict[str, str | int | float]:
         """Flatten to a CSV row."""
         return {
             "encoder": self.encoder,
+            "split": self.split,
             "depth": self.depth,
             "n_probes": self.n_probes,
             "budgeted": int(self.budgeted),
@@ -163,6 +194,7 @@ class OperatingPoint:
             "scan_p95": round(self.scanned.p95, 5),
             "scan_max": round(self.scanned.maximum, 5),
             "n_ranges": round(self.n_ranges, 2),
+            "budget_filled": round(self.budget_filled, 4),
         }
 
 
@@ -177,6 +209,20 @@ class QuerySet:
     def k(self) -> int:
         """Number of true neighbours each query is scored against."""
         return self.truth.shape[1]
+
+
+def split_queries(queries: QuerySet) -> tuple[QuerySet, QuerySet]:
+    """Halve the held-out queries into a validation and a test set.
+
+    Choosing a depth on the same queries the recall is reported on is
+    hyperparameter selection on the evaluation set. The first half picks the
+    operating point; the second half is what gets reported.
+    """
+    half = len(queries.queries) // 2
+    return (
+        QuerySet(queries=queries.queries[:half], truth=queries.truth[:half]),
+        QuerySet(queries=queries.queries[half:], truth=queries.truth[half:]),
+    )
 
 
 @dataclass(frozen=True)
@@ -220,6 +266,7 @@ def measure(
     index: CodeIndex,
     queries: QuerySet,
     setting: Setting,
+    split: str = "all",
 ) -> OperatingPoint:
     """Run every query at one operating point and average the three costs."""
     corpus_size = len(index.codes)
@@ -231,8 +278,13 @@ def measure(
         recalls[i] = np.isin(queries.truth[i], result.members).sum() / queries.k
         scanned[i] = result.n_scanned / corpus_size
         ranges[i] = result.n_ranges
+    filled = 1.0
+    if setting.budget is not None:
+        reached = scanned * corpus_size >= min(setting.budget, corpus_size) - 0.5
+        filled = float(reached.mean())
     return OperatingPoint(
         encoder=encoder.name,
+        split=split,
         depth=setting.depth,
         n_probes=setting.width,
         budgeted=setting.budget is not None,
@@ -240,4 +292,5 @@ def measure(
         recall_stderr=float(recalls.std(ddof=1) / np.sqrt(len(recalls))),
         scanned=ScanDistribution.of(scanned),
         n_ranges=float(ranges.mean()),
+        budget_filled=filled,
     )

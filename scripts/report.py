@@ -33,8 +33,10 @@ class Point:
     encoder: str
     depth: int
     n_probes: int
+    split: str
     recall: float
     budgeted: bool
+    budget_filled: float
     scan_mean: float
     scan_p95: float
     n_ranges: float
@@ -51,10 +53,12 @@ def read_points(path: Path) -> list[Point]:
         return [
             Point(
                 encoder=row["encoder"],
+                split=row["split"],
                 depth=int(row["depth"]),
                 n_probes=int(row["n_probes"]),
                 recall=float(row["recall"]),
                 budgeted=bool(int(row["budgeted"])),
+                budget_filled=float(row["budget_filled"]),
                 scan_mean=float(row["scan_mean"]),
                 scan_p95=float(row["scan_p95"]),
                 n_ranges=float(row["n_ranges"]),
@@ -110,15 +114,37 @@ def _families(points: list[Point]) -> dict[str, list[Point]]:
     return families
 
 
+def _chosen_on_validation(points: list[Point], candidates: int) -> Point | None:
+    """Pick the depth on validation queries, then report the test measurement.
+
+    Selecting the depth on the same queries the recall is reported on is
+    hyperparameter selection on the evaluation set.
+    """
+    at_budget = [
+        p
+        for p in points
+        if p.budgeted and p.n_probes == candidates and p.budget_filled >= 1.0
+    ]
+    validation = [p for p in at_budget if p.split == "validation"]
+    test = {p.depth: p for p in at_budget if p.split == "test"}
+    if not validation or not test:
+        return None
+    depth = max(validation, key=lambda p: p.recall).depth
+    return test.get(depth)
+
+
 def _budget_cell(points: list[Point], candidates: int) -> str:
-    """Format one family's best point at one per-query candidate budget."""
+    """Format one family's selected point at one per-query candidate budget."""
     per_seed: dict[str, list[Point]] = {}
     for point in points:
         if point.budgeted and point.n_probes == candidates:
             per_seed.setdefault(point.encoder, []).append(point)
     if not per_seed:
         return "—"
-    bests = [max(group, key=lambda p: p.recall) for group in per_seed.values()]
+    picked = [_chosen_on_validation(group, candidates) for group in per_seed.values()]
+    bests = [p for p in picked if p is not None]
+    if not bests:
+        return "—"
     recalls = [b.recall for b in bests]
     ranges = statistics.mean(b.n_ranges for b in bests)
     if len(bests) == 1:
@@ -139,8 +165,13 @@ def render_budget_table(points: list[Point], corpus_size: float) -> list[str]:
         "## At a per-query candidate budget",
         "",
         "Every encoder spends the same candidates on *every* query: cells are",
-        "scanned nearest-first and truncated at the budget. No averaging hides",
-        "an expensive query here.",
+        "visited nearest-first and the boundary cell is truncated in index",
+        "order, the way a range scan with a LIMIT would. No averaging hides an",
+        "expensive query here.",
+        "",
+        "Depth is chosen on the validation queries and reported on the held-out",
+        "test queries, so the number is not selected on what it reports. Only",
+        "operating points that filled the budget on every query are eligible.",
         "",
         f"| encoder | {' | '.join(shares)} |",
         "|---|" + "---|" * len(candidates),
@@ -166,7 +197,7 @@ def render_budget_table(points: list[Point], corpus_size: float) -> list[str]:
 
 def render(points: list[Point], notes: dict[str, float]) -> str:
     """Render the recall-within-budget table, with range counts in brackets."""
-    width = [p for p in points if not p.budgeted]
+    width = [p for p in points if not p.budgeted and p.split == "test"]
     families = _families(width)
     header = " | ".join(f"mean scan ≤{b:.1%}" for b in BUDGETS)
     lines = [

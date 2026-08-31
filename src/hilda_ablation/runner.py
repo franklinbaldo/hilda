@@ -24,6 +24,7 @@ from hilda_ablation.evaluation import (
     Setting,
     exact_neighbours,
     measure,
+    split_queries,
 )
 from hilda_ablation.geometry import unit_norm
 from hilda_ablation.projections import fit_pca, fit_random_projection
@@ -229,14 +230,21 @@ def run_ablation(
         result.notes[f"pca{dims}_explained_variance"] = (
             projection.explained_variance_ratio
         )
+    validation, test = split_queries(queries)
+    result.notes["validation_queries"] = float(len(validation.queries))
+    result.notes["test_queries"] = float(len(test.queries))
     for encoder in build_roster(documents, roster):
         index = CodeIndex(codes=encoder.encode(documents))
         logger.info("measuring %s", encoder.name)
-        for bits, depth in grid.depths_for(encoder):
+        for _bits, depth in grid.depths_for(encoder):
             for setting in grid.settings_for(depth, len(documents)):
-                point = measure(encoder, index, queries, setting)
-                result.points.append(point)
-                logger.debug(
-                    "%s /%d x%d %.3f", encoder.name, bits, setting.width, point.recall
-                )
+                for split, half in (("validation", validation), ("test", test)):
+                    point = measure(encoder, index, half, setting, split=split)
+                    result.points.append(point)
+                    if point.budget_filled < 1.0:
+                        logger.warning(
+                            "%s did not fill its budget for %.0f%% of queries",
+                            encoder.name,
+                            100 * (1 - point.budget_filled),
+                        )
     return result
