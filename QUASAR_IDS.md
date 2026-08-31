@@ -28,17 +28,95 @@ The allocation is intentionally asymmetric. A semantic item can have only a shor
 
 ## Monotonicity rule
 
-A released semantic nibble is immutable.
+A released **semantic** nibble is immutable.
 
 A future HILDA model may only:
 
 1. fill previously unassigned nibbles to the left with more general structure;
 2. fill previously unassigned nibbles to the right with finer structure;
-3. leave unknown levels unassigned.
+3. replace nibbles that were explicitly declared to be **jitter**, because jitter is not a semantic assertion;
+4. leave unknown levels unassigned.
 
 It must not reinterpret an already emitted semantic nibble.
 
-This is the central compatibility hypothesis. If useful future models require changing old nibbles rather than extending them, the persistent-ID thesis fails.
+This is the central compatibility hypothesis. If useful future models require changing old semantic nibbles rather than extending them, the persistent-ID thesis fails.
+
+Equivalently, a later version must consume the previous version as part of its input and preserve every semantic assertion already made. Refinement to the right is a split of an existing cell. Generalisation to the left groups existing cells without repartitioning their contents. A new release must never perform an unconstrained global repartition and silently assign new meanings to old digits.
+
+## Explicit jitter for unresolved specialisation
+
+HILDA must distinguish three states in the specialisation tail:
+
+1. **semantic** — this nibble is a classification assertion and is immutable;
+2. **unassigned** — no value is being asserted at this resolution;
+3. **jitter** — the user deliberately requests provisional entropy even though no semantic refinement is currently known.
+
+Jitter is useful when an application wants more dispersion or local uniqueness inside a known semantic region before the ontology has enough resolution to classify that region further. It must never masquerade as semantic precision.
+
+The amount of jitter is therefore an explicit **user-selected parameter**. The classifier determines the known semantic span; the caller determines how many provisional jitter nibbles are appended after that span, subject to the remaining 128-bit budget.
+
+Conceptually:
+
+```text
+[ generalisation headroom ][ known semantic address ][ J ][ jitter... ][ future semantic headroom ][ identity ]
+```
+
+where `J` is a control nibble stating that the following payload is provisional jitter rather than classification.
+
+### Jitter framing
+
+The prototype should not reserve one of the 16 semantic child values globally for `J`, because doing so would silently reduce every semantic level from radix 16 to radix 15 and would make a literal semantic value ambiguous with control syntax.
+
+Instead, the 128-bit format must reserve an explicit **control-nibble position or framed control region** whose interpretation is not a cluster decision. One control nibble identifies the presence/mode of jitter. The concrete UUID packing is deferred until the abstract payload grammar is validated.
+
+A minimal abstract grammar is:
+
+```text
+semantic-span | jitter-control | jitter-payload | remaining-headroom
+```
+
+The jitter control must make at least these states distinguishable:
+
+```text
+0 = no jitter
+1 = jitter present
+```
+
+Later framing may use additional control values for deterministic jitter, caller-supplied jitter, or other policies without changing the semantic path.
+
+The **length** of jitter should be explicit rather than inferred from random-looking digits. A practical prototype can pair the control nibble with a length nibble (`0..15` jitter nibbles); longer encodings can be considered only if an application demonstrates a need for them.
+
+### Determinism and replacement
+
+Jitter is intentionally outside the semantic monotonicity invariant. A future HILDA version may replace jitter positions with newly discovered semantic refinements while preserving all previously asserted semantic nibbles.
+
+For reproducible IDs, the default jitter generator should be deterministic from stable inputs, for example:
+
+```text
+jitter = PRF(namespace, object-fingerprint, hilda-version, user-jitter-length)
+```
+
+The user controls **how much** jitter is requested; the default implementation controls its deterministic derivation. An API may additionally permit caller-supplied jitter when the application explicitly wants that behavior, but it must remain tagged as non-semantic.
+
+This gives a monotone information rule:
+
+```text
+future_version = previous_semantic_information + new_semantic_information
+```
+
+not:
+
+```text
+future_version = reinterpret(previous_semantic_information)
+```
+
+Replacing tagged jitter with semantic digits adds knowledge; it does not contradict an earlier classification because jitter never claimed to be classification.
+
+### Jitter must not affect semantic comparisons
+
+Semantic prefix/span comparisons, quasar-region agreement and hierarchy metrics must ignore tagged jitter. Two objects that share the same semantic path but have different jitter remain in the same HILDA semantic region.
+
+Jitter may be useful for physical B-tree dispersion, collision management or application-level identity, but those are separate claims to benchmark. If jitter degrades range locality enough to erase HILDA's retrieval benefit, it should be restricted to positions outside the range-key portion or omitted for that application.
 
 ## Quasar anchoring
 
@@ -63,6 +141,7 @@ object
   -> coarse anchored region
   -> hierarchical local subclusters
   -> HILDA semantic address
+  -> optional tagged jitter
   -> UUID-compatible 128-bit encoding
 ```
 
@@ -92,7 +171,7 @@ The expected pattern, if the Semantic Observers hypothesis is useful here, is:
 - lower agreement as the address becomes more specific;
 - stronger observers maintaining useful agreement deeper into the address.
 
-Unknown/unassigned nibbles are not padding. They explicitly mean that the current scheme does not claim a classification at that resolution.
+Unknown/unassigned nibbles are not padding. They explicitly mean that the current scheme does not claim a classification at that resolution. Tagged jitter is also not a classification and must be excluded from semantic agreement metrics.
 
 ## Experiment A — refit stability
 
@@ -121,7 +200,8 @@ Measure at each wave:
 - prefix occupancy and entropy;
 - fraction of new objects routed into previously empty cells;
 - address stability of existing objects;
-- whether a proposed refinement can extend rightward without changing assigned nibbles.
+- whether a proposed refinement can extend rightward without changing assigned semantic nibbles;
+- how often tagged jitter can be replaced by new semantic refinement without touching older semantic digits.
 
 This connects directly to the incremental-growth experiment: the desired property is cheap append plus rare need to invalidate an address.
 
@@ -137,11 +217,25 @@ Choose at least two independent embedding observers and a shared stimulus corpus
 
 Do not require raw coordinate alignment. The claim is only that quasar-relative macroscopic relations can provide a more reproducible discrete address.
 
+## Experiment D — jitter semantics and locality
+
+For fixed semantic addresses, vary the user-requested jitter length over a preregistered ladder, including zero jitter.
+
+Measure separately:
+
+- collision/duplicate rate for the application identity policy;
+- B-tree physical size and insertion cost;
+- semantic range-query locality when jitter is inside versus outside the searchable range key;
+- deterministic reproducibility of default jitter;
+- successful replacement of tagged jitter by later semantic refinements without mutation of older semantic nibbles.
+
+The experiment must not count jitter bits as additional semantic resolution.
+
 ## UUID compatibility
 
 The first prototype should model an abstract 128-bit payload before claiming conformance to a particular UUID version. RFC 9562 reserves version/variant semantics that must not be overwritten casually.
 
-A later implementation can evaluate UUIDv8, whose application-defined payload is the natural candidate for a custom semantic identifier. Until then, report semantic-bit budget separately from UUID framing overhead.
+A later implementation can evaluate UUIDv8, whose application-defined payload is the natural candidate for a custom semantic identifier. Until then, report semantic-bit budget, control/jitter overhead and UUID framing overhead separately.
 
 ## Kill conditions
 
@@ -151,7 +245,8 @@ The quasar-anchored direction should be rejected or narrowed if any of these hol
 2. coarse address agreement is highly seed- or corpus-dependent;
 3. cross-observer agreement does not exceed matched random-anchor controls;
 4. incremental growth routinely requires changing already assigned semantic nibbles;
-5. the number of bits required for useful semantic structure leaves too little identity entropy for the target applications.
+5. the number of bits required for useful semantic structure leaves too little identity entropy for the target applications;
+6. jitter cannot be cleanly separated from semantic ordering or makes ordinary range indexing impractical at useful lengths.
 
 ## Near-term decision
 
@@ -159,4 +254,4 @@ Do not optimize query latency first. The next HILDA question is whether a persis
 
 > Can fixed semantic quasars make the coarse portion of a hierarchical 128-bit identifier reproducible across refits, corpus growth and independent embedding observers while preserving useful retrieval locality?
 
-If yes, later work can optimize the storage, indexing and UUID framing. If no, HILDA remains a corpus-local compressed retrieval code rather than a persistent semantic identifier.
+If yes, later work can optimize storage, indexing, jitter policy and UUID framing. If no, HILDA remains a corpus-local compressed retrieval code rather than a persistent semantic identifier.
