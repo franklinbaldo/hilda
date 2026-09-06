@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright (c) 2026 Franklin Baldo. See LICENSE.
 """Apply the frozen Experiment A decision rule to replica evidence."""
 
@@ -41,7 +40,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Evaluate HILDA refit-stability Experiment A evidence."
     )
-    parser.add_argument("input", type=Path, help="JSON file containing replica evidence")
+    parser.add_argument(
+        "input",
+        type=Path,
+        help="JSON file containing replica evidence",
+    )
     parser.add_argument("output", type=Path, help="Destination JSON artifact")
     args = parser.parse_args()
 
