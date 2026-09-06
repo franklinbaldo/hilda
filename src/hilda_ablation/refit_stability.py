@@ -9,13 +9,15 @@ exchangeable cluster labels as stable identifiers.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from itertools import combinations
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import numpy as np
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 REQUIRED_ARMS: Final = ("plain", "quasar", "shuffled", "random")
 
