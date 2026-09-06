@@ -9,9 +9,10 @@ exchangeable cluster labels as stable identifiers.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from itertools import combinations
-from typing import Final, Sequence
+from typing import Final
 
 import numpy as np
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
@@ -109,23 +110,26 @@ def evaluate_refit_stability(
     shuffled = np.asarray([item.ari for item in pairwise["shuffled"]], dtype=float)
     random = np.asarray([item.ari for item in pairwise["random"]], dtype=float)
 
-    delta = quasar - plain
-    delta_ari = float(delta.mean())
+    delta_ari = float((quasar - plain).mean())
     ci95 = _replica_bootstrap_ci(pairwise, active)
     retrieval_matched = _retrieval_is_matched(grouped, active)
     beats_shuffled = float(quasar.mean()) > float(shuffled.mean())
     beats_random = float(quasar.mean()) > float(random.mean())
     replica_count = len(grouped["quasar"])
 
-    decision = _decide(
-        replica_count=replica_count,
-        delta_ari=delta_ari,
-        ci95=ci95,
-        retrieval_matched=retrieval_matched,
-        beats_shuffled=beats_shuffled,
-        beats_random=beats_random,
-        config=active,
-    )
+    if replica_count < active.minimum_replicas or not retrieval_matched:
+        decision = "inconclusive"
+    elif (
+        delta_ari < active.minimum_delta
+        or not beats_shuffled
+        or not beats_random
+    ):
+        decision = "kill"
+    elif ci95[0] <= 0.0:
+        decision = "inconclusive"
+    else:
+        decision = "continue"
+
     return ExperimentDecision(
         decision=decision,
         delta_ari=delta_ari,
@@ -151,7 +155,10 @@ def _validate_and_group(
             raise ValueError(msg)
         grouped[item.arm].append(item)
 
-    replica_sets = {arm: {item.replica for item in values} for arm, values in grouped.items()}
+    replica_sets = {
+        arm: {item.replica for item in values}
+        for arm, values in grouped.items()
+    }
     if not replica_sets["quasar"]:
         msg = "at least one replica is required for every arm"
         raise ValueError(msg)
@@ -164,7 +171,9 @@ def _validate_and_group(
         arm: tuple(sorted(values, key=lambda item: item.replica))
         for arm, values in grouped.items()
     }
-    label_lengths = {len(item.labels) for values in ordered.values() for item in values}
+    label_lengths = {
+        len(item.labels) for values in ordered.values() for item in values
+    }
     if len(label_lengths) != 1:
         msg = f"all replicas must label the same held-out objects, got {label_lengths}"
         raise ValueError(msg)
@@ -199,13 +208,17 @@ def _retrieval_is_matched(
     config: DecisionConfig,
 ) -> bool:
     """Require every control to operate near the quasar arm's retrieval utility."""
-    reference_recall = float(np.mean([item.recall for item in grouped["quasar"]]))
+    reference_recall = float(
+        np.mean([item.recall for item in grouped["quasar"]])
+    )
     reference_fraction = float(
         np.mean([item.candidate_fraction for item in grouped["quasar"]])
     )
     for arm in ("plain", "shuffled", "random"):
         recall = float(np.mean([item.recall for item in grouped[arm]]))
-        fraction = float(np.mean([item.candidate_fraction for item in grouped[arm]]))
+        fraction = float(
+            np.mean([item.candidate_fraction for item in grouped[arm]])
+        )
         if abs(recall - reference_recall) > config.recall_tolerance:
             return False
         if abs(fraction - reference_fraction) > config.candidate_fraction_tolerance:
@@ -224,7 +237,11 @@ def _replica_bootstrap_ci(
     boundary instead of pretending held-out objects are independent experiments.
     """
     lookup: dict[str, dict[tuple[int, int], float]] = {}
-    replicas = sorted({item.left for item in pairwise["quasar"]} | {item.right for item in pairwise["quasar"]})
+    quasar_rows = pairwise["quasar"]
+    replicas = sorted(
+        {item.left for item in quasar_rows}
+        | {item.right for item in quasar_rows}
+    )
     for arm, rows in pairwise.items():
         lookup[arm] = {(item.left, item.right): item.ari for item in rows}
 
@@ -247,23 +264,3 @@ def _replica_bootstrap_ci(
         raise ValueError(msg)
     low, high = np.quantile(np.asarray(draws), [0.025, 0.975])
     return float(low), float(high)
-
-
-def _decide(
-    *,
-    replica_count: int,
-    delta_ari: float,
-    ci95: tuple[float, float],
-    retrieval_matched: bool,
-    beats_shuffled: bool,
-    beats_random: bool,
-    config: DecisionConfig,
-) -> str:
-    """Apply the preregistered continue/kill/inconclusive rule literally."""
-    if replica_count < config.minimum_replicas or not retrieval_matched:
-        return "inconclusive"
-    if delta_ari < config.minimum_delta or not beats_shuffled or not beats_random:
-        return "kill"
-    if ci95[0] <= 0.0:
-        return "inconclusive"
-    return "continue"
