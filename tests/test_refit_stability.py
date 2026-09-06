@@ -16,10 +16,15 @@ N_REPLICAS = 8
 N_OBJECTS = 40
 RECALL = 0.80
 CANDIDATE_FRACTION = 0.25
+MINIMUM_DELTA = DecisionConfig().minimum_delta
+ARMS = ("plain", "quasar", "shuffled", "random")
 
 
 def _labels(arm: str, replica: int, *, stable_quasar: bool) -> tuple[int, ...]:
-    """Build deterministic partitions with a stable or deliberately unstable quasar arm."""
+    """Build deterministic partitions.
+
+    The quasar arm can be stable while the controls are deliberately unstable.
+    """
     base = np.repeat(np.arange(4), N_OBJECTS // 4)
     if arm == "quasar" and stable_quasar:
         return tuple(int(value) for value in base)
@@ -36,22 +41,20 @@ def _labels(arm: str, replica: int, *, stable_quasar: bool) -> tuple[int, ...]:
 
 def _evidence(*, stable_quasar: bool = True) -> list[ReplicaEvidence]:
     """Build all four preregistered arms at matched retrieval utility."""
-    rows: list[ReplicaEvidence] = []
-    for arm in ("plain", "quasar", "shuffled", "random"):
-        for replica in range(N_REPLICAS):
-            rows.append(
-                ReplicaEvidence(
-                    arm=arm,
-                    replica=replica,
-                    seed=1000 + replica,
-                    labels=_labels(arm, replica, stable_quasar=stable_quasar),
-                    calibration_digest=f"{arm}-calibration-{replica}",
-                    hierarchy_digest=f"{arm}-hierarchy-{replica}",
-                    recall=RECALL,
-                    candidate_fraction=CANDIDATE_FRACTION,
-                )
-            )
-    return rows
+    return [
+        ReplicaEvidence(
+            arm=arm,
+            replica=replica,
+            seed=1000 + replica,
+            labels=_labels(arm, replica, stable_quasar=stable_quasar),
+            calibration_digest=f"{arm}-calibration-{replica}",
+            hierarchy_digest=f"{arm}-hierarchy-{replica}",
+            recall=RECALL,
+            candidate_fraction=CANDIDATE_FRACTION,
+        )
+        for arm in ARMS
+        for replica in range(N_REPLICAS)
+    ]
 
 
 def test_stable_quasar_partition_continues() -> None:
@@ -62,7 +65,7 @@ def test_stable_quasar_partition_continues() -> None:
     )
 
     assert result.decision == "continue"
-    assert result.delta_ari >= 0.10
+    assert result.delta_ari >= MINIMUM_DELTA
     assert result.delta_ari_ci95[0] > 0
     assert result.retrieval_matched
     assert result.beats_shuffled
@@ -132,7 +135,9 @@ def test_quasar_calibration_must_be_independent() -> None:
             seed=item.seed,
             labels=item.labels,
             calibration_digest=(
-                "fixed-calibration" if item.arm == "quasar" else item.calibration_digest
+                "fixed-calibration"
+                if item.arm == "quasar"
+                else item.calibration_digest
             ),
             hierarchy_digest=item.hierarchy_digest,
             recall=item.recall,
