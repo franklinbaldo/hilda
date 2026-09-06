@@ -121,11 +121,7 @@ def evaluate_refit_stability(
 
     if replica_count < active.minimum_replicas or not retrieval_matched:
         decision = "inconclusive"
-    elif (
-        delta_ari < active.minimum_delta
-        or not beats_shuffled
-        or not beats_random
-    ):
+    elif delta_ari < active.minimum_delta or not beats_shuffled or not beats_random:
         decision = "kill"
     elif ci95[0] <= 0.0:
         decision = "inconclusive"
@@ -158,8 +154,7 @@ def _validate_and_group(
         grouped[item.arm].append(item)
 
     replica_sets = {
-        arm: {item.replica for item in values}
-        for arm, values in grouped.items()
+        arm: {item.replica for item in values} for arm, values in grouped.items()
     }
     if not replica_sets["quasar"]:
         msg = "at least one replica is required for every arm"
@@ -173,9 +168,7 @@ def _validate_and_group(
         arm: tuple(sorted(values, key=lambda item: item.replica))
         for arm, values in grouped.items()
     }
-    label_lengths = {
-        len(item.labels) for values in ordered.values() for item in values
-    }
+    label_lengths = {len(item.labels) for values in ordered.values() for item in values}
     if len(label_lengths) != 1:
         msg = f"all replicas must label the same held-out objects, got {label_lengths}"
         raise ValueError(msg)
@@ -210,17 +203,13 @@ def _retrieval_is_matched(
     config: DecisionConfig,
 ) -> bool:
     """Require every control to operate near the quasar arm's retrieval utility."""
-    reference_recall = float(
-        np.mean([item.recall for item in grouped["quasar"]])
-    )
+    reference_recall = float(np.mean([item.recall for item in grouped["quasar"]]))
     reference_fraction = float(
         np.mean([item.candidate_fraction for item in grouped["quasar"]])
     )
     for arm in ("plain", "shuffled", "random"):
         recall = float(np.mean([item.recall for item in grouped[arm]]))
-        fraction = float(
-            np.mean([item.candidate_fraction for item in grouped[arm]])
-        )
+        fraction = float(np.mean([item.candidate_fraction for item in grouped[arm]]))
         if abs(recall - reference_recall) > config.recall_tolerance:
             return False
         if abs(fraction - reference_fraction) > config.candidate_fraction_tolerance:
@@ -241,8 +230,7 @@ def _replica_bootstrap_ci(
     lookup: dict[str, dict[tuple[int, int], float]] = {}
     quasar_rows = pairwise["quasar"]
     replicas = sorted(
-        {item.left for item in quasar_rows}
-        | {item.right for item in quasar_rows}
+        {item.left for item in quasar_rows} | {item.right for item in quasar_rows}
     )
     for arm, rows in pairwise.items():
         lookup[arm] = {(item.left, item.right): item.ari for item in rows}
