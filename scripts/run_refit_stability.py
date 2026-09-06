@@ -1,3 +1,4 @@
+# ruff: noqa: INP001
 # Copyright (c) 2026 Franklin Baldo. See LICENSE.
 """Apply the frozen Experiment A decision rule to replica evidence."""
 
