@@ -75,9 +75,7 @@ def test_stable_quasar_partition_continues() -> None:
 def test_no_quasar_advantage_kills() -> None:
     """A quasar arm without the preregistered ARI gain cannot be rescued."""
     evidence = _evidence(stable_quasar=False)
-    plain = {
-        item.replica: item.labels for item in evidence if item.arm == "plain"
-    }
+    plain = {item.replica: item.labels for item in evidence if item.arm == "plain"}
     evidence = [
         ReplicaEvidence(
             arm=item.arm,
@@ -135,9 +133,7 @@ def test_quasar_calibration_must_be_independent() -> None:
             seed=item.seed,
             labels=item.labels,
             calibration_digest=(
-                "fixed-calibration"
-                if item.arm == "quasar"
-                else item.calibration_digest
+                "fixed-calibration" if item.arm == "quasar" else item.calibration_digest
             ),
             hierarchy_digest=item.hierarchy_digest,
             recall=item.recall,
