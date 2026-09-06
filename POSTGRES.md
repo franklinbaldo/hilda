@@ -154,7 +154,7 @@ separating rather than lumping into "where a vector index is impractical".
 | 1. A vector index exists and is affordable | **Measured.** HILDA loses on both recall and latency. |
 | 2. No vector index is available — pgvector not installed, managed service without it | **Measured.** The alternative is the exact scan, and HILDA is 2.8x cheaper per query at −0.042 recall. |
 | 3. A vector index could exist, but its storage or rebuild cost makes it undesirable | **Not measured.** The index costs above (0.15 MB against 16.35 MB, 0.012 s against 2.335 s) are inputs to that argument, not the argument. Whether they dominate some real deployment's budget is a claim about that deployment. |
-| 4. The vector working set exceeds available memory | **Not measured.** It needs an explicit memory-pressure protocol; exceeding `shared_buffers` is not enough. |
+| 4. The vector working set exceeds available memory | **Measured, in [MEMORY.md](MEMORY.md). No crossover.** Pressure degrades HNSW harder in relative terms and never enough to change the ordering at matched recall. |
 
 Regime 2 is a database capability; regime 3 is an economic decision. They may
 end up sharing a query strategy, but they need different evidence, and only

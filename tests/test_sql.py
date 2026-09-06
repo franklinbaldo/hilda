@@ -49,6 +49,18 @@ def test_every_placeholder_is_positional() -> None:
     assert sql.count("%s") == len(params)
 
 
+def test_the_rerank_sits_behind_an_optimisation_fence() -> None:
+    """The re-rank sits behind an optimisation fence.
+
+    Without ``OFFSET 0`` a table carrying a vector index lets the planner
+    answer the sort from that index and demote the codes to a filter, which
+    measures the vector index under a different name.
+    """
+    sql, _ = range_scan_sql([IndexRange(0, 1)], vector=VECTOR, limit=10)
+    assert "OFFSET 0" in sql
+    assert sql.index("OFFSET 0") < sql.index("<=>")
+
+
 def test_no_range_is_not_a_query() -> None:
     """No range is not a query."""
     with pytest.raises(ValueError, match="at least one range"):
